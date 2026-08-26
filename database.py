@@ -1,99 +1,90 @@
-import sqlite3
+import os
 
-from pathlib import Path
+import psycopg
+from psycopg.rows import dict_row
 
 
-DATABASE_PATH = Path(__file__).parent / "users.db"
+DATABASE_URL = os.getenv(
+    "DATABASE_URL"
+)
 
 
 def get_connection():
-    connection = sqlite3.connect(
-        DATABASE_PATH
+    return psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row
     )
-
-    connection.row_factory = sqlite3.Row
-
-    return connection
 
 
 def initialize_database():
-    connection = get_connection()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
 
-    cursor = connection.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL
+                )
+                """
+            )
 
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL
-        )
-        """
-    )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS verification_codes (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    verified INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
 
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS verification_codes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            code_hash TEXT NOT NULL,
-            expires_at REAL NOT NULL,
-            verified INTEGER NOT NULL DEFAULT 0
-        )
-        """
-    )
-
-    connection.commit()
-    connection.close()
+        connection.commit()
 
 
 def get_user_by_email(email):
-    connection = get_connection()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
 
-    cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM users
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
 
-    cursor.execute(
-        """
-        SELECT *
-        FROM users
-        WHERE email = ?
-        """,
-        (
-            email.lower().strip(),
-        )
-    )
-
-    user = cursor.fetchone()
-
-    connection.close()
-
-    return user
+            return cursor.fetchone()
 
 
 def create_user(
     email,
     password_hash
 ):
-    connection = get_connection()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
 
-    cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO users (
+                    email,
+                    password_hash
+                )
+                VALUES (%s, %s)
+                """,
+                (
+                    email.lower().strip(),
+                    password_hash
+                )
+            )
 
-    cursor.execute(
-        """
-        INSERT INTO users (
-            email,
-            password_hash
-        )
-        VALUES (?, ?)
-        """,
-        (
-            email.lower().strip(),
-            password_hash
-        )
-    )
-
-    connection.commit()
-    connection.close()
+        connection.commit()
 
 
 def save_verification_code(
@@ -101,90 +92,83 @@ def save_verification_code(
     code_hash,
     expires_at
 ):
-    connection = get_connection()
-    cursor = connection.cursor()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
 
-    cursor.execute(
-        """
-        INSERT INTO verification_codes (
-            email,
-            code_hash,
-            expires_at,
-            verified
-        )
-        VALUES (?, ?, ?, 0)
+            cursor.execute(
+                """
+                INSERT INTO verification_codes (
+                    email,
+                    code_hash,
+                    expires_at,
+                    verified
+                )
+                VALUES (%s, %s, %s, 0)
 
-        ON CONFLICT(email)
-        DO UPDATE SET
-            code_hash = excluded.code_hash,
-            expires_at = excluded.expires_at,
-            verified = 0
-        """,
-        (
-            email.lower().strip(),
-            code_hash,
-            expires_at
-        )
-    )
+                ON CONFLICT(email)
+                DO UPDATE SET
+                    code_hash = EXCLUDED.code_hash,
+                    expires_at = EXCLUDED.expires_at,
+                    verified = 0
+                """,
+                (
+                    email.lower().strip(),
+                    code_hash,
+                    expires_at
+                )
+            )
 
-    connection.commit()
-    connection.close()
+        connection.commit()
 
 
 def get_verification_code(email):
-    connection = get_connection()
-    cursor = connection.cursor()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
 
-    cursor.execute(
-        """
-        SELECT *
-        FROM verification_codes
-        WHERE email = ?
-        """,
-        (
-            email.lower().strip(),
-        )
-    )
+            cursor.execute(
+                """
+                SELECT *
+                FROM verification_codes
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
 
-    result = cursor.fetchone()
-
-    connection.close()
-
-    return result
+            return cursor.fetchone()
 
 
 def set_email_verified(email):
-    connection = get_connection()
-    cursor = connection.cursor()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
 
-    cursor.execute(
-        """
-        UPDATE verification_codes
-        SET verified = 1
-        WHERE email = ?
-        """,
-        (
-            email.lower().strip(),
-        )
-    )
+            cursor.execute(
+                """
+                UPDATE verification_codes
+                SET verified = 1
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
 
-    connection.commit()
-    connection.close()
+        connection.commit()
 
 
 def delete_user(email):
-    connection = get_connection()
-    cursor = connection.cursor()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
 
-    cursor.execute(
-        """
-        DELETE FROM users
-        WHERE email = ?
-        """,
-        (
-            email.lower().strip(),
-        )
-    )
+            cursor.execute(
+                """
+                DELETE FROM users
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
 
-    connection.commit()
-    connection.close()
+        connection.commit()

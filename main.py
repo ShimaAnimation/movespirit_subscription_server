@@ -29,8 +29,9 @@ from database import (
 )
 
 load_dotenv()
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 resend.api_key = os.getenv("RESEND_API_KEY")
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
 
 app = FastAPI()
 password_hash = PasswordHash.recommended()
@@ -459,3 +460,21 @@ def verify_code(
     return {
         "success": True
     }
+
+
+stripe_key = os.getenv("STRIPE_SECRET_KEY")
+
+print(
+    "Stripe key exists:",
+    bool(stripe_key)
+)
+
+print(
+    "Stripe key prefix:",
+    stripe_key[:8] if stripe_key else None
+)
+
+print(
+    "Stripe key length:",
+    len(stripe_key) if stripe_key else 0
+)
