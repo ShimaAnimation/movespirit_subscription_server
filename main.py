@@ -8,12 +8,14 @@ import resend
 
 from database import (
     initialize_database,
-    get_connection,
     get_user_by_email,
     create_user,
     save_verification_code,
     get_verification_code,
-    set_email_verified
+    set_email_verified,
+    save_login_token,
+    get_login_token,
+    delete_login_token
 )
 
 from dotenv import load_dotenv
@@ -252,9 +254,18 @@ def login(
                 "trialing"
             ):
 
+                token = secrets.token_urlsafe(48)
+
+                save_login_token(
+                    email,
+                    token,
+                    time.time()
+                )
+
                 return {
                     "success": True,
-                    "subscription_active": True
+                    "subscription_active": True,
+                    "token": token
                 }
 
     return {
@@ -478,3 +489,41 @@ print(
     "Stripe key length:",
     len(stripe_key) if stripe_key else 0
 )
+
+
+class TokenCheckRequest(BaseModel):
+    token: str
+
+
+@app.post("/check-token")
+def check_token(
+    request: TokenCheckRequest
+):
+    token = request.token.strip()
+
+    token_data = get_login_token(
+        token
+    )
+
+    if not token_data:
+        return {
+            "success": False,
+            "reason": "invalid_token"
+        }
+
+    email = token_data["email"]
+
+    if not is_subscription_active(email):
+        delete_login_token(
+            token
+        )
+
+        return {
+            "success": False,
+            "reason": "subscription_not_active"
+        }
+
+    return {
+        "success": True,
+        "subscription_active": True
+    }

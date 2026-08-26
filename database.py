@@ -42,6 +42,16 @@ def initialize_database():
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS login_tokens (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    token TEXT UNIQUE NOT NULL,
+                    created_at DOUBLE PRECISION NOT NULL
+                )
+                """
+            )
         connection.commit()
 
 
@@ -168,6 +178,68 @@ def delete_user(email):
                 """,
                 (
                     email.lower().strip(),
+                )
+            )
+
+        connection.commit()
+
+
+def save_login_token(
+    email,
+    token,
+    created_at
+):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                INSERT INTO login_tokens (
+                    email,
+                    token,
+                    created_at
+                )
+                VALUES (%s, %s, %s)
+                """,
+                (
+                    email.lower().strip(),
+                    token,
+                    created_at
+                )
+            )
+
+        connection.commit()
+
+
+def get_login_token(token):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM login_tokens
+                WHERE token = %s
+                """,
+                (
+                    token,
+                )
+            )
+
+            return cursor.fetchone()
+
+
+def delete_login_token(token):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                DELETE FROM login_tokens
+                WHERE token = %s
+                """,
+                (
+                    token,
                 )
             )
 
