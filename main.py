@@ -636,22 +636,3 @@ def check_token(
         "subscription_active": True,
         "email": email
     }
-
-
-class DeleteUserRequest(BaseModel):
-    email: str
-
-
-@app.post("/delete-test-user")
-def delete_test_user(
-    request: DeleteUserRequest
-):
-    email = request.email.strip().lower()
-
-    delete_user(
-        email
-    )
-
-    return {
-        "success": True
-    }
