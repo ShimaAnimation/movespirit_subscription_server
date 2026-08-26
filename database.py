@@ -60,6 +60,16 @@ def initialize_database():
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    failed_count INTEGER NOT NULL DEFAULT 0,
+                    locked_until DOUBLE PRECISION NOT NULL DEFAULT 0
+                )
+                """
+            )
         connection.commit()
 
 
@@ -265,6 +275,94 @@ def delete_login_tokens_by_email(email):
             cursor.execute(
                 """
                 DELETE FROM login_tokens
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+        connection.commit()
+
+
+def get_login_attempt(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM login_attempts
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+            return cursor.fetchone()
+
+
+def register_login_failure(email):
+    email = email.lower().strip()
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                INSERT INTO login_attempts (
+                    email,
+                    failed_count,
+                    locked_until
+                )
+                VALUES (%s, 1, 0)
+
+                ON CONFLICT(email)
+                DO UPDATE SET
+                    failed_count = login_attempts.failed_count + 1
+                """,
+                (
+                    email,
+                )
+            )
+
+        connection.commit()
+
+
+def lock_login(email, locked_until):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                INSERT INTO login_attempts (
+                    email,
+                    failed_count,
+                    locked_until
+                )
+                VALUES (%s, 5, %s)
+
+                ON CONFLICT(email)
+                DO UPDATE SET
+                    failed_count = 5,
+                    locked_until = EXCLUDED.locked_until
+                """,
+                (
+                    email.lower().strip(),
+                    locked_until
+                )
+            )
+
+        connection.commit()
+
+
+def reset_login_attempts(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                DELETE FROM login_attempts
                 WHERE email = %s
                 """,
                 (

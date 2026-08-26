@@ -17,7 +17,10 @@ from database import (
     get_login_token,
     delete_login_token,
     delete_login_tokens_by_email,
-    delete_user
+    get_login_attempt,
+    register_login_failure,
+    lock_login,
+    reset_login_attempts
 )
 
 from dotenv import load_dotenv
@@ -207,7 +210,31 @@ def login(
     email = request.email.strip().lower()
     password = request.password
 
-    print("login email:", email)
+    # -------------------------
+    # ロック状態確認
+    # -------------------------
+
+    login_attempt = get_login_attempt(
+        email
+    )
+
+    if login_attempt:
+
+        locked_until = login_attempt[
+            "locked_until"
+        ]
+
+        if locked_until > time.time():
+
+            retry_after = int(
+                locked_until - time.time()
+            )
+
+            return {
+                "success": False,
+                "reason": "login_locked",
+                "retry_after": retry_after
+            }
 
     user = get_user_by_email(
         email
@@ -225,29 +252,79 @@ def login(
     )
 
     if not password_ok:
+
+        register_login_failure(
+            email
+        )
+
+        login_attempt = get_login_attempt(
+            email
+        )
+
+        failed_count = login_attempt[
+            "failed_count"
+        ]
+
+        # 5回失敗したら15分ロック
+        if failed_count >= 5:
+
+            locked_until = (
+                time.time()
+                + (15 * 60)
+            )
+
+            lock_login(
+                email,
+                locked_until
+            )
+
+            return {
+                "success": False,
+                "reason": "login_locked",
+                "retry_after": 15 * 60
+            }
+
+        remaining_attempts = (
+            5 - failed_count
+        )
+
         return {
             "success": False,
-            "reason": "invalid_password"
+            "reason": "invalid_password",
+            "remaining_attempts": remaining_attempts
         }
 
-    active = is_subscription_active(
+    # -------------------------
+    # パスワード成功
+    # -------------------------
+
+    reset_login_attempts(
         email
     )
 
-    print(
-        "login subscription active:",
-        active
-    )
+    # -------------------------
+    # Stripe確認
+    # -------------------------
 
-    if not active:
+    if not is_subscription_active(
+        email
+    ):
         return {
             "success": False,
             "reason": "subscription_not_active"
         }
 
+    # -------------------------
+    # 古いtoken削除
+    # -------------------------
+
     delete_login_tokens_by_email(
         email
     )
+
+    # -------------------------
+    # 新token発行
+    # -------------------------
 
     token = secrets.token_urlsafe(
         48
