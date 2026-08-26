@@ -463,28 +463,3 @@ def verify_code(
 
 class DeleteUserRequest(BaseModel):
     email: str
-
-
-@app.post("/delete-test-user")
-def delete_test_user(
-    request: DeleteUserRequest
-):
-    connection = get_connection()
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-        DELETE FROM users
-        WHERE email = ?
-        """,
-        (
-            request.email.strip().lower(),
-        )
-    )
-
-    connection.commit()
-    connection.close()
-
-    return {
-        "success": True
-    }
