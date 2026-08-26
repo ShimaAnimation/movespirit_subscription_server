@@ -508,15 +508,16 @@ def check_token(
         token
     )
 
+    print(
+        "token_data:",
+        token_data
+    )
+
     if not token_data:
         return {
             "success": False,
             "reason": "invalid_token"
         }
-
-    # -------------------------
-    # token有効期限
-    # -------------------------
 
     TOKEN_EXPIRE_SECONDS = (
         30 * 24 * 60 * 60
@@ -530,7 +531,6 @@ def check_token(
         time.time() - created_at
         > TOKEN_EXPIRE_SECONDS
     ):
-
         delete_login_token(
             token
         )
@@ -544,14 +544,21 @@ def check_token(
         "email"
     ]
 
-    # -------------------------
-    # Stripe契約確認
-    # -------------------------
-
-    if not is_subscription_active(
+    print(
+        "check-token email:",
         email
-    ):
+    )
 
+    active = is_subscription_active(
+        email
+    )
+
+    print(
+        "subscription active:",
+        active
+    )
+
+    if not active:
         delete_login_token(
             token
         )
@@ -563,5 +570,6 @@ def check_token(
 
     return {
         "success": True,
-        "subscription_active": True
+        "subscription_active": True,
+        "email": email
     }
