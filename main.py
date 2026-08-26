@@ -531,9 +531,8 @@ def check_token(
             "reason": "invalid_token"
         }
 
-    TOKEN_EXPIRE_SECONDS = (
-        30 * 24 * 60 * 60
-    )
+    #TOKEN_EXPIRE_SECONDS = (30 * 24 * 60 * 60)
+    TOKEN_EXPIRE_SECONDS = (30)
 
     created_at = token_data[
         "created_at"
