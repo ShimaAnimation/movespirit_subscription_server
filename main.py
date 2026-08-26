@@ -15,7 +15,8 @@ from database import (
     set_email_verified,
     save_login_token,
     get_login_token,
-    delete_login_token
+    delete_login_token,
+    delete_login_tokens_by_email
 )
 
 from dotenv import load_dotenv
@@ -254,19 +255,21 @@ def login(
                 "trialing"
             ):
 
-                token = secrets.token_urlsafe(48)
+                # 同じユーザーの古いtokenを削除
+                delete_login_tokens_by_email(
+                    email
+                )
+
+                # 新しいtokenを発行
+                token = secrets.token_urlsafe(
+                    48
+                )
 
                 save_login_token(
                     email,
                     token,
                     time.time()
                 )
-
-                return {
-                    "success": True,
-                    "subscription_active": True,
-                    "token": token
-                }
 
     return {
         "success": False,
@@ -511,9 +514,44 @@ def check_token(
             "reason": "invalid_token"
         }
 
-    email = token_data["email"]
+    # -------------------------
+    # token有効期限
+    # -------------------------
 
-    if not is_subscription_active(email):
+    TOKEN_EXPIRE_SECONDS = (
+        30 * 24 * 60 * 60
+    )
+
+    created_at = token_data[
+        "created_at"
+    ]
+
+    if (
+        time.time() - created_at
+        > TOKEN_EXPIRE_SECONDS
+    ):
+
+        delete_login_token(
+            token
+        )
+
+        return {
+            "success": False,
+            "reason": "token_expired"
+        }
+
+    email = token_data[
+        "email"
+    ]
+
+    # -------------------------
+    # Stripe契約確認
+    # -------------------------
+
+    if not is_subscription_active(
+        email
+    ):
+
         delete_login_token(
             token
         )

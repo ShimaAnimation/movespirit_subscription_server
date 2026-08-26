@@ -244,3 +244,20 @@ def delete_login_token(token):
             )
 
         connection.commit()
+
+
+def delete_login_tokens_by_email(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                DELETE FROM login_tokens
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+        connection.commit()
