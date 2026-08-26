@@ -1,0 +1,465 @@
+import os
+import stripe
+
+import hashlib
+import secrets
+import smtplib
+import time
+
+from email.message import EmailMessage
+
+from database import (
+    initialize_database,
+    get_user_by_email,
+    create_user,
+    save_verification_code,
+    get_verification_code,
+    set_email_verified
+)
+
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+from pwdlib import PasswordHash
+
+from database import (
+    initialize_database,
+    get_user_by_email,
+    create_user
+)
+
+load_dotenv()
+
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
+app = FastAPI()
+password_hash = PasswordHash.recommended()
+initialize_database()
+
+class SubscriptionCheckRequest(BaseModel):
+    email: str
+
+
+@app.get("/")
+def root():
+    return {
+        "status": "MoveSpirit subscription server is running"
+    }
+
+
+@app.get("/stripe-check")
+def stripe_check():
+    account = stripe.Account.retrieve()
+
+    return {
+        "stripe_connected": True,
+        "account_id": account.id
+    }
+
+
+@app.post("/check-subscription")
+def check_subscription(request: SubscriptionCheckRequest):
+
+    email = request.email.strip().lower()
+
+    customers = stripe.Customer.list(
+        email=email,
+        limit=10
+    )
+
+    if not customers.data:
+        return {
+            "active": False,
+            "email": email,
+            "reason": "customer_not_found"
+        }
+
+    for customer in customers.data:
+
+        subscriptions = stripe.Subscription.list(
+            customer=customer.id,
+            status="all",
+            limit=100
+        )
+
+        for subscription in subscriptions.data:
+
+            if subscription.status in (
+                "active",
+                "trialing"
+            ):
+                return {
+                    "active": True,
+                    "email": email,
+                    "customer_id": customer.id,
+                    "subscription_id": subscription.id,
+                    "subscription_status": subscription.status
+                }
+
+    return {
+        "active": False,
+        "email": email,
+        "reason": "active_subscription_not_found"
+    }
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/register")
+def register(
+    request: RegisterRequest
+):
+    email = request.email.strip().lower()
+    password = request.password
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if len(password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    existing_user = get_user_by_email(
+        email
+    )
+
+    if existing_user:
+        return {
+            "success": False,
+            "reason": "already_registered"
+        }
+
+    # -------------------------
+    # メール本人確認済みか確認
+    # -------------------------
+
+    verification = get_verification_code(
+        email
+    )
+
+    if not verification:
+        return {
+            "success": False,
+            "reason": "email_not_verified"
+        }
+
+    if verification["verified"] != 1:
+        return {
+            "success": False,
+            "reason": "email_not_verified"
+        }
+
+    # -------------------------
+    # 念のためStripe契約も再確認
+    # -------------------------
+
+    if not is_subscription_active(email):
+        return {
+            "success": False,
+            "reason": "subscription_not_active"
+        }
+
+    # -------------------------
+    # パスワード保存
+    # -------------------------
+
+    hashed_password = password_hash.hash(
+        password
+    )
+
+    create_user(
+        email,
+        hashed_password
+    )
+
+    return {
+        "success": True
+    }
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/login")
+def login(
+    request: LoginRequest
+):
+    email = request.email.strip().lower()
+    password = request.password
+
+    user = get_user_by_email(
+        email
+    )
+
+    if not user:
+        return {
+            "success": False,
+            "reason": "user_not_found"
+        }
+
+    # -------------------------
+    # パスワード確認
+    # -------------------------
+
+    password_ok = password_hash.verify(
+        password,
+        user["password_hash"]
+    )
+
+    if not password_ok:
+        return {
+            "success": False,
+            "reason": "invalid_password"
+        }
+
+    # -------------------------
+    # Stripe契約確認
+    # -------------------------
+
+    customers = stripe.Customer.list(
+        email=email,
+        limit=10
+    )
+
+    for customer in customers.data:
+
+        subscriptions = stripe.Subscription.list(
+            customer=customer.id,
+            status="all",
+            limit=100
+        )
+
+        for subscription in subscriptions.data:
+
+            if subscription.status in (
+                "active",
+                "trialing"
+            ):
+
+                return {
+                    "success": True,
+                    "subscription_active": True
+                }
+
+    return {
+        "success": False,
+        "reason": "subscription_not_active"
+    }
+
+
+def send_verification_email(
+    target_email,
+    code
+):
+    mail_address = os.getenv(
+        "MAIL_ADDRESS"
+    )
+
+    mail_password = os.getenv(
+        "MAIL_APP_PASSWORD"
+    )
+
+    message = EmailMessage()
+
+    message["Subject"] = (
+        "MoveSpirit Verification Code"
+    )
+
+    message["From"] = mail_address
+    message["To"] = target_email
+
+    message.set_content(
+        f"""
+MoveSpirit verification code:
+
+{code}
+
+This code will expire in 10 minutes.
+
+If you did not request this code,
+please ignore this email.
+"""
+    )
+
+    with smtplib.SMTP_SSL(
+        "smtp.gmail.com",
+        465
+    ) as smtp:
+
+        smtp.login(
+            mail_address,
+            mail_password
+        )
+
+        smtp.send_message(
+            message
+        )
+
+
+def is_subscription_active(email):
+    customers = stripe.Customer.list(
+        email=email,
+        limit=10
+    )
+
+    for customer in customers.data:
+
+        subscriptions = stripe.Subscription.list(
+            customer=customer.id,
+            status="all",
+            limit=100
+        )
+
+        for subscription in subscriptions.data:
+
+            if subscription.status in (
+                "active",
+                "trialing"
+            ):
+                return True
+
+    return False
+
+
+class SendVerificationCodeRequest(BaseModel):
+    email: str
+
+
+@app.post("/send-verification-code")
+def send_verification_code(
+    request: SendVerificationCodeRequest
+):
+    try:
+        email = request.email.strip().lower()
+
+        if not email:
+            return {
+                "success": False,
+                "reason": "email_required"
+            }
+
+        existing_user = get_user_by_email(email)
+
+        if existing_user:
+            return {
+                "success": False,
+                "reason": "already_registered"
+            }
+
+        if not is_subscription_active(email):
+            return {
+                "success": False,
+                "reason": "subscription_not_active"
+            }
+
+        code = f"{secrets.randbelow(1000000):06d}"
+
+        code_hash = hashlib.sha256(
+            code.encode("utf-8")
+        ).hexdigest()
+
+        expires_at = time.time() + 600
+
+        save_verification_code(
+            email,
+            code_hash,
+            expires_at
+        )
+
+        print("送信先:", email)
+        print(
+            "MAIL_ADDRESS:",
+            os.getenv("MAIL_ADDRESS")
+        )
+        print(
+            "MAIL_APP_PASSWORD exists:",
+            bool(os.getenv("MAIL_APP_PASSWORD"))
+        )
+
+        send_verification_email(
+            email,
+            code
+        )
+
+        return {
+            "success": True
+        }
+
+    except Exception as e:
+        print(
+            "send-verification-code ERROR:",
+            repr(e)
+        )
+
+        return {
+            "success": False,
+            "reason": "server_error",
+            "detail": str(e)
+        }
+
+
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/verify-code")
+def verify_code(
+    request: VerifyCodeRequest
+):
+    email = request.email.strip().lower()
+    code = request.code.strip()
+
+    verification = get_verification_code(
+        email
+    )
+
+    if not verification:
+        return {
+            "success": False,
+            "reason": "verification_not_found"
+        }
+
+    # 有効期限確認
+    if time.time() > verification["expires_at"]:
+        return {
+            "success": False,
+            "reason": "verification_expired"
+        }
+
+    # 入力されたコードをハッシュ化
+    input_code_hash = hashlib.sha256(
+        code.encode("utf-8")
+    ).hexdigest()
+
+    # DBに保存したハッシュと比較
+    if input_code_hash != verification["code_hash"]:
+        return {
+            "success": False,
+            "reason": "invalid_code"
+        }
+
+    # 本人確認済みにする
+    set_email_verified(
+        email
+    )
+
+    return {
+        "success": True
+    }
