@@ -459,7 +459,3 @@ def verify_code(
     return {
         "success": True
     }
-
-
-class DeleteUserRequest(BaseModel):
-    email: str
