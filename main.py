@@ -377,7 +377,9 @@ def send_verification_code(
                 "reason": "email_required"
             }
 
-        existing_user = get_user_by_email(email)
+        existing_user = get_user_by_email(
+            email
+        )
 
         if existing_user:
             return {
@@ -385,35 +387,84 @@ def send_verification_code(
                 "reason": "already_registered"
             }
 
-        if not is_subscription_active(email):
+        if not is_subscription_active(
+            email
+        ):
             return {
                 "success": False,
                 "reason": "subscription_not_active"
             }
 
-        code = f"{secrets.randbelow(1000000):06d}"
+        # -------------------------
+        # 60秒以内の再送を禁止
+        # -------------------------
+
+        existing_verification = (
+            get_verification_code(
+                email
+            )
+        )
+
+        if existing_verification:
+
+            last_sent_at = (
+                existing_verification[
+                    "sent_at"
+                ]
+            )
+
+            elapsed = (
+                time.time()
+                - last_sent_at
+            )
+
+            if elapsed < 60:
+
+                retry_after = max(
+                    1,
+                    int(60 - elapsed)
+                )
+
+                return {
+                    "success": False,
+                    "reason": "too_many_requests",
+                    "retry_after": retry_after
+                }
+
+        # -------------------------
+        # 6桁コード生成
+        # -------------------------
+
+        code = (
+            f"{secrets.randbelow(1000000):06d}"
+        )
 
         code_hash = hashlib.sha256(
             code.encode("utf-8")
         ).hexdigest()
 
-        expires_at = time.time() + 600
+        # 現在時刻
+        sent_at = time.time()
+
+        # 10分後に失効
+        expires_at = (
+            sent_at + 600
+        )
+
+        # -------------------------
+        # DB保存
+        # -------------------------
 
         save_verification_code(
             email,
             code_hash,
-            expires_at
+            expires_at,
+            sent_at
         )
 
-        print("送信先:", email)
-        print(
-            "MAIL_ADDRESS:",
-            os.getenv("MAIL_ADDRESS")
-        )
-        print(
-            "MAIL_APP_PASSWORD exists:",
-            bool(os.getenv("MAIL_APP_PASSWORD"))
-        )
+        # -------------------------
+        # メール送信
+        # -------------------------
 
         send_verification_email(
             email,
@@ -425,6 +476,7 @@ def send_verification_code(
         }
 
     except Exception as e:
+
         print(
             "send-verification-code ERROR:",
             repr(e)

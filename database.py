@@ -37,8 +37,16 @@ def initialize_database():
                     email TEXT UNIQUE NOT NULL,
                     code_hash TEXT NOT NULL,
                     expires_at DOUBLE PRECISION NOT NULL,
+                    sent_at DOUBLE PRECISION NOT NULL DEFAULT 0,
                     verified INTEGER NOT NULL DEFAULT 0
                 )
+                """
+            )
+
+            cursor.execute(
+                """
+                ALTER TABLE verification_codes
+                ADD COLUMN IF NOT EXISTS sent_at DOUBLE PRECISION NOT NULL DEFAULT 0
                 """
             )
 
@@ -100,7 +108,8 @@ def create_user(
 def save_verification_code(
     email,
     code_hash,
-    expires_at
+    expires_at,
+    sent_at
 ):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -111,20 +120,23 @@ def save_verification_code(
                     email,
                     code_hash,
                     expires_at,
+                    sent_at,
                     verified
                 )
-                VALUES (%s, %s, %s, 0)
+                VALUES (%s, %s, %s, %s, 0)
 
                 ON CONFLICT(email)
                 DO UPDATE SET
                     code_hash = EXCLUDED.code_hash,
                     expires_at = EXCLUDED.expires_at,
+                    sent_at = EXCLUDED.sent_at,
                     verified = 0
                 """,
                 (
                     email.lower().strip(),
                     code_hash,
-                    expires_at
+                    expires_at,
+                    sent_at
                 )
             )
 
