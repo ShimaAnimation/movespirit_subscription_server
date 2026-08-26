@@ -170,3 +170,21 @@ def set_email_verified(email):
 
     connection.commit()
     connection.close()
+
+
+def delete_user(email):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM users
+        WHERE email = ?
+        """,
+        (
+            email.lower().strip(),
+        )
+    )
+
+    connection.commit()
+    connection.close()

@@ -1,15 +1,14 @@
 import os
-import stripe
-
 import hashlib
 import secrets
-import smtplib
 import time
 
-from email.message import EmailMessage
+import stripe
+import resend
 
 from database import (
     initialize_database,
+    get_connection,
     get_user_by_email,
     create_user,
     save_verification_code,
@@ -30,8 +29,8 @@ from database import (
 )
 
 load_dotenv()
-
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+resend.api_key = os.getenv("RESEND_API_KEY")
 
 app = FastAPI()
 password_hash = PasswordHash.recommended()
@@ -267,49 +266,46 @@ def send_verification_email(
     target_email,
     code
 ):
-    mail_address = os.getenv(
-        "MAIL_ADDRESS"
+    params = {
+        "from": "MoveSpirit <onboarding@resend.dev>",
+        "to": [
+            target_email
+        ],
+        "subject": "MoveSpirit Verification Code",
+        "html": f"""
+        <div style="font-family: Arial, sans-serif;">
+            <h2>MoveSpirit</h2>
+
+            <p>
+                Your verification code is:
+            </p>
+
+            <h1>
+                {code}
+            </h1>
+
+            <p>
+                This code will expire in 10 minutes.
+            </p>
+
+            <p>
+                If you did not request this code,
+                please ignore this email.
+            </p>
+        </div>
+        """
+    }
+
+    result = resend.Emails.send(
+        params
     )
 
-    mail_password = os.getenv(
-        "MAIL_APP_PASSWORD"
+    print(
+        "Resend result:",
+        result
     )
 
-    message = EmailMessage()
-
-    message["Subject"] = (
-        "MoveSpirit Verification Code"
-    )
-
-    message["From"] = mail_address
-    message["To"] = target_email
-
-    message.set_content(
-        f"""
-MoveSpirit verification code:
-
-{code}
-
-This code will expire in 10 minutes.
-
-If you did not request this code,
-please ignore this email.
-"""
-    )
-
-    with smtplib.SMTP_SSL(
-        "smtp.gmail.com",
-        465
-    ) as smtp:
-
-        smtp.login(
-            mail_address,
-            mail_password
-        )
-
-        smtp.send_message(
-            message
-        )
+    return result
 
 
 def is_subscription_active(email):
@@ -459,6 +455,35 @@ def verify_code(
     set_email_verified(
         email
     )
+
+    return {
+        "success": True
+    }
+
+
+class DeleteUserRequest(BaseModel):
+    email: str
+
+
+@app.post("/delete-test-user")
+def delete_test_user(
+    request: DeleteUserRequest
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM users
+        WHERE email = ?
+        """,
+        (
+            request.email.strip().lower(),
+        )
+    )
+
+    connection.commit()
+    connection.close()
 
     return {
         "success": True
