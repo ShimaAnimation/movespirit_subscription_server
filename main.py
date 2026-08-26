@@ -16,7 +16,8 @@ from database import (
     save_login_token,
     get_login_token,
     delete_login_token,
-    delete_login_tokens_by_email
+    delete_login_tokens_by_email,
+    delete_user
 )
 
 from dotenv import load_dotenv
@@ -634,4 +635,23 @@ def check_token(
         "success": True,
         "subscription_active": True,
         "email": email
+    }
+
+
+class DeleteUserRequest(BaseModel):
+    email: str
+
+
+@app.post("/delete-test-user")
+def delete_test_user(
+    request: DeleteUserRequest
+):
+    email = request.email.strip().lower()
+
+    delete_user(
+        email
+    )
+
+    return {
+        "success": True
     }
