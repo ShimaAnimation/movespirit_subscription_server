@@ -206,6 +206,8 @@ def login(
     email = request.email.strip().lower()
     password = request.password
 
+    print("login email:", email)
+
     user = get_user_by_email(
         email
     )
@@ -215,10 +217,6 @@ def login(
             "success": False,
             "reason": "user_not_found"
         }
-
-    # -------------------------
-    # パスワード確認
-    # -------------------------
 
     password_ok = password_hash.verify(
         password,
@@ -231,49 +229,39 @@ def login(
             "reason": "invalid_password"
         }
 
-    # -------------------------
-    # Stripe契約確認
-    # -------------------------
-
-    customers = stripe.Customer.list(
-        email=email,
-        limit=10
+    active = is_subscription_active(
+        email
     )
 
-    for customer in customers.data:
+    print(
+        "login subscription active:",
+        active
+    )
 
-        subscriptions = stripe.Subscription.list(
-            customer=customer.id,
-            status="all",
-            limit=100
-        )
+    if not active:
+        return {
+            "success": False,
+            "reason": "subscription_not_active"
+        }
 
-        for subscription in subscriptions.data:
+    delete_login_tokens_by_email(
+        email
+    )
 
-            if subscription.status in (
-                "active",
-                "trialing"
-            ):
+    token = secrets.token_urlsafe(
+        48
+    )
 
-                # 同じユーザーの古いtokenを削除
-                delete_login_tokens_by_email(
-                    email
-                )
-
-                # 新しいtokenを発行
-                token = secrets.token_urlsafe(
-                    48
-                )
-
-                save_login_token(
-                    email,
-                    token,
-                    time.time()
-                )
+    save_login_token(
+        email,
+        token,
+        time.time()
+    )
 
     return {
-        "success": False,
-        "reason": "subscription_not_active"
+        "success": True,
+        "subscription_active": True,
+        "token": token
     }
 
 
@@ -324,12 +312,30 @@ def send_verification_email(
 
 
 def is_subscription_active(email):
+    email = email.strip().lower()
+
+    print(
+        "is_subscription_active email:",
+        email
+    )
+
     customers = stripe.Customer.list(
         email=email,
         limit=10
     )
 
+    print(
+        "customer count:",
+        len(customers.data)
+    )
+
     for customer in customers.data:
+
+        print(
+            "customer:",
+            customer.id,
+            customer.email
+        )
 
         subscriptions = stripe.Subscription.list(
             customer=customer.id,
@@ -338,6 +344,12 @@ def is_subscription_active(email):
         )
 
         for subscription in subscriptions.data:
+
+            print(
+                "subscription:",
+                subscription.id,
+                subscription.status
+            )
 
             if subscription.status in (
                 "active",
