@@ -255,16 +255,14 @@ def save_login_token(
                 INSERT INTO login_tokens (
                     email,
                     token,
-                    created_at,
-                    expires_at
+                    created_at
                 )
-                VALUES (%s, %s, %s, %s)
+                VALUES (%s, %s, %s)
                 """,
                 (
                     email.lower().strip(),
                     token,
-                    created_at,
-                    expires_at
+                    created_at
                 )
             )
 
