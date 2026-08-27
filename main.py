@@ -20,7 +20,8 @@ from database import (
     get_login_attempt,
     register_login_failure,
     lock_login,
-    reset_login_attempts
+    reset_login_attempts,
+    delete_verification_code
 )
 
 from dotenv import load_dotenv
@@ -193,6 +194,10 @@ def register(
         hashed_password
     )
 
+    delete_verification_code(
+        email
+    )
+
     return {
         "success": True
     }
@@ -219,7 +224,6 @@ def login(
     )
 
     if login_attempt:
-
         locked_until = login_attempt[
             "locked_until"
         ]
@@ -325,10 +329,11 @@ def login(
     # -------------------------
     # 新token発行
     # -------------------------
-
     token = secrets.token_urlsafe(
         48
     )
+    created_at = time.time()
+    expires_at = created_at + (30 * 24 * 60 * 60)
 
     save_login_token(
         email,
@@ -530,6 +535,15 @@ def send_verification_code(
         )
 
         # -------------------------
+        # メール送信
+        # -------------------------
+
+        send_verification_email(
+            email,
+            code
+        )
+
+        # -------------------------
         # DB保存
         # -------------------------
 
@@ -540,14 +554,9 @@ def send_verification_code(
             sent_at
         )
 
-        # -------------------------
-        # メール送信
-        # -------------------------
-
-        send_verification_email(
-            email,
-            code
-        )
+        return {
+            "success": True
+        }
 
         return {
             "success": True

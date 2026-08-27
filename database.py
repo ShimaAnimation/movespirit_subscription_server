@@ -45,6 +45,19 @@ def initialize_database():
 
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS password_reset_codes (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    sent_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    verified INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+
+            cursor.execute(
+                """
                 ALTER TABLE verification_codes
                 ADD COLUMN IF NOT EXISTS sent_at DOUBLE PRECISION NOT NULL DEFAULT 0
                 """
@@ -58,6 +71,12 @@ def initialize_database():
                     token TEXT UNIQUE NOT NULL,
                     created_at DOUBLE PRECISION NOT NULL
                 )
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE login_tokens
+                ADD COLUMN IF NOT EXISTS expires_at DOUBLE PRECISION
                 """
             )
             cursor.execute(
@@ -115,6 +134,59 @@ def create_user(
         connection.commit()
 
 
+def set_email_verified(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                UPDATE verification_codes
+                SET verified = 1
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+        connection.commit()
+
+
+def get_verification_code(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM verification_codes
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+            return cursor.fetchone()
+
+
+def delete_verification_code(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                DELETE FROM verification_codes
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+        connection.commit()
+
+
 def save_verification_code(
     email,
     code_hash,
@@ -153,42 +225,6 @@ def save_verification_code(
         connection.commit()
 
 
-def get_verification_code(email):
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT *
-                FROM verification_codes
-                WHERE email = %s
-                """,
-                (
-                    email.lower().strip(),
-                )
-            )
-
-            return cursor.fetchone()
-
-
-def set_email_verified(email):
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                UPDATE verification_codes
-                SET verified = 1
-                WHERE email = %s
-                """,
-                (
-                    email.lower().strip(),
-                )
-            )
-
-        connection.commit()
-
-
 def delete_user(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -219,14 +255,16 @@ def save_login_token(
                 INSERT INTO login_tokens (
                     email,
                     token,
-                    created_at
+                    created_at,
+                    expires_at
                 )
-                VALUES (%s, %s, %s)
+                VALUES (%s, %s, %s, %s)
                 """,
                 (
                     email.lower().strip(),
                     token,
-                    created_at
+                    created_at,
+                    expires_at
                 )
             )
 
@@ -367,6 +405,113 @@ def reset_login_attempts(email):
                 """,
                 (
                     email.lower().strip(),
+                )
+            )
+
+        connection.commit()
+
+def get_password_reset_code(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM password_reset_codes
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+            return cursor.fetchone()
+
+
+def save_password_reset_code(
+    email,
+    code_hash,
+    expires_at,
+    sent_at
+):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO password_reset_codes (
+                    email,
+                    code_hash,
+                    expires_at,
+                    sent_at,
+                    verified
+                )
+                VALUES (%s, %s, %s, %s, 0)
+
+                ON CONFLICT(email)
+                DO UPDATE SET
+                    code_hash = EXCLUDED.code_hash,
+                    expires_at = EXCLUDED.expires_at,
+                    sent_at = EXCLUDED.sent_at,
+                    verified = 0
+                """,
+                (
+                    email.lower().strip(),
+                    code_hash,
+                    expires_at,
+                    sent_at
+                )
+            )
+
+        connection.commit()
+
+
+def set_password_reset_verified(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE password_reset_codes
+                SET verified = 1
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+        connection.commit()
+
+
+def delete_password_reset_code(email):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM password_reset_codes
+                WHERE email = %s
+                """,
+                (
+                    email.lower().strip(),
+                )
+            )
+
+        connection.commit()
+
+
+def update_user_password(
+    email,
+    password_hash
+):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE users
+                SET password_hash = %s
+                WHERE email = %s
+                """,
+                (
+                    password_hash,
+                    email.lower().strip()
                 )
             )
 
