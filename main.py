@@ -348,7 +348,7 @@ def send_verification_email(
     code
 ):
     params = {
-        "from": "MoveSpirit <onboarding@resend.dev>",
+        "from": "MoveSpirit <noreply@movespirit.net>",
         "to": [
             target_email
         ],
