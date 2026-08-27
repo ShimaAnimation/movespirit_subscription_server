@@ -21,7 +21,13 @@ from database import (
     register_login_failure,
     lock_login,
     reset_login_attempts,
-    delete_verification_code
+    delete_verification_code,
+
+    get_password_reset_code,
+    save_password_reset_code,
+    set_password_reset_verified,
+    delete_password_reset_code,
+    update_user_password
 )
 
 from dotenv import load_dotenv
@@ -721,4 +727,323 @@ def check_token(
         "success": True,
         "subscription_active": True,
         "email": email
+    }
+
+
+class SendPasswordResetCodeRequest(BaseModel):
+    email: str
+
+
+@app.post("/send-password-reset-code")
+def send_password_reset_code(
+    request: SendPasswordResetCodeRequest
+):
+    try:
+        email = request.email.strip().lower()
+
+        if not email:
+            return {
+                "success": False,
+                "reason": "email_required"
+            }
+
+        # -------------------------
+        # 登録済みユーザーか確認
+        # -------------------------
+
+        user = get_user_by_email(
+            email
+        )
+
+        if not user:
+            return {
+                "success": False,
+                "reason": "user_not_found"
+            }
+
+        # -------------------------
+        # 60秒以内の再送禁止
+        # -------------------------
+
+        existing_reset = get_password_reset_code(
+            email
+        )
+
+        if existing_reset:
+
+            last_sent_at = existing_reset[
+                "sent_at"
+            ]
+
+            elapsed = (
+                time.time()
+                - last_sent_at
+            )
+
+            if elapsed < 60:
+
+                retry_after = max(
+                    1,
+                    int(60 - elapsed)
+                )
+
+                return {
+                    "success": False,
+                    "reason": "too_many_requests",
+                    "retry_after": retry_after
+                }
+
+        # -------------------------
+        # 6桁コード生成
+        # -------------------------
+
+        code = (
+            f"{secrets.randbelow(1000000):06d}"
+        )
+
+        code_hash = hashlib.sha256(
+            code.encode("utf-8")
+        ).hexdigest()
+
+        sent_at = time.time()
+
+        # 10分後に失効
+        expires_at = (
+            sent_at + 600
+        )
+
+        # -------------------------
+        # メール送信
+        # -------------------------
+
+        params = {
+            "from": "MoveSpirit <noreply@movespirit.net>",
+            "to": [
+                email
+            ],
+            "subject": "MoveSpirit Password Reset Code",
+            "html": f"""
+            <div style="font-family: Arial, sans-serif;">
+                <h2>MoveSpirit</h2>
+
+                <p>
+                    Your password reset code is:
+                </p>
+
+                <h1>
+                    {code}
+                </h1>
+
+                <p>
+                    This code will expire in 10 minutes.
+                </p>
+
+                <p>
+                    If you did not request a password reset,
+                    please ignore this email.
+                </p>
+            </div>
+            """
+        }
+
+        resend.Emails.send(
+            params
+        )
+
+        # -------------------------
+        # メール送信成功後にDB保存
+        # -------------------------
+
+        save_password_reset_code(
+            email,
+            code_hash,
+            expires_at,
+            sent_at
+        )
+
+        return {
+            "success": True
+        }
+
+    except Exception as e:
+
+        print(
+            "send-password-reset-code ERROR:",
+            repr(e)
+        )
+
+        return {
+            "success": False,
+            "reason": "server_error",
+            "detail": str(e)
+        }
+
+
+class VerifyPasswordResetCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/verify-password-reset-code")
+def verify_password_reset_code(
+    request: VerifyPasswordResetCodeRequest
+):
+    email = request.email.strip().lower()
+    code = request.code.strip()
+
+    reset_data = get_password_reset_code(
+        email
+    )
+
+    if not reset_data:
+        return {
+            "success": False,
+            "reason": "verification_not_found"
+        }
+
+    # -------------------------
+    # 有効期限確認
+    # -------------------------
+
+    if time.time() > reset_data[
+        "expires_at"
+    ]:
+        return {
+            "success": False,
+            "reason": "verification_expired"
+        }
+
+    # -------------------------
+    # 入力コードをハッシュ化
+    # -------------------------
+
+    input_code_hash = hashlib.sha256(
+        code.encode("utf-8")
+    ).hexdigest()
+
+    if (
+        input_code_hash
+        != reset_data["code_hash"]
+    ):
+        return {
+            "success": False,
+            "reason": "invalid_code"
+        }
+
+    # -------------------------
+    # パスワード変更許可状態にする
+    # -------------------------
+
+    set_password_reset_verified(
+        email
+    )
+
+    return {
+        "success": True
+    }
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    new_password: str
+
+
+@app.post("/reset-password")
+def reset_password(
+    request: ResetPasswordRequest
+):
+    email = request.email.strip().lower()
+    new_password = request.new_password
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if len(new_password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    # -------------------------
+    # 登録済みユーザーか確認
+    # -------------------------
+
+    user = get_user_by_email(
+        email
+    )
+
+    if not user:
+        return {
+            "success": False,
+            "reason": "user_not_found"
+        }
+
+    # -------------------------
+    # 認証コード確認済みか確認
+    # -------------------------
+
+    reset_data = get_password_reset_code(
+        email
+    )
+
+    if not reset_data:
+        return {
+            "success": False,
+            "reason": "email_not_verified"
+        }
+
+    if reset_data[
+        "verified"
+    ] != 1:
+        return {
+            "success": False,
+            "reason": "email_not_verified"
+        }
+
+    # -------------------------
+    # 念のため有効期限も再確認
+    # -------------------------
+
+    if time.time() > reset_data[
+        "expires_at"
+    ]:
+        return {
+            "success": False,
+            "reason": "verification_expired"
+        }
+
+    # -------------------------
+    # 新しいパスワードをハッシュ化
+    # -------------------------
+
+    hashed_password = password_hash.hash(
+        new_password
+    )
+
+    update_user_password(
+        email,
+        hashed_password
+    )
+
+    # -------------------------
+    # 古いログイントークンを全削除
+    # -------------------------
+
+    delete_login_tokens_by_email(
+        email
+    )
+
+    # -------------------------
+    # パスワード再設定情報を削除
+    # -------------------------
+
+    delete_password_reset_code(
+        email
+    )
+
+    return {
+        "success": True
     }
