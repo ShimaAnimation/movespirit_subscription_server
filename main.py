@@ -31,7 +31,7 @@ from database import (
 )
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from pwdlib import PasswordHash
@@ -42,14 +42,23 @@ from database import (
     create_user
 )
 
+app = FastAPI()
+
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
+CUSTOMER_PORTAL_RETURN_URL = os.getenv(
+    "CUSTOMER_PORTAL_RETURN_URL",
+    "https://x.com/ShimaAnimation"
+)
+
 load_dotenv()
 resend.api_key = os.getenv("RESEND_API_KEY")
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
-
 app = FastAPI()
 password_hash = PasswordHash.recommended()
 initialize_database()
+
 
 class SubscriptionCheckRequest(BaseModel):
     email: str
@@ -214,6 +223,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class CustomerPortalRequest(BaseModel):
+    token: str
+
+
 @app.post("/login")
 def login(
     request: LoginRequest
@@ -351,6 +364,19 @@ def login(
         "success": True,
         "subscription_active": True,
         "token": token
+    }
+
+@app.post("/create-customer-portal")
+def create_customer_portal(request: CustomerPortalRequest):
+
+    print(
+        "create_customer_portal token:",
+        request.token
+    )
+
+    return {
+        "success": True,
+        "message": "customer portal test"
     }
 
 
@@ -1048,4 +1074,21 @@ def reset_password(
 
     return {
         "success": True
+    }
+
+
+class CustomerPortalRequest(BaseModel):
+    token: str
+
+@app.post("/create-customer-portal")
+def create_customer_portal(request: CustomerPortalRequest):
+
+    print(
+        "create_customer_portal token:",
+        request.token
+    )
+
+    return {
+        "success": True,
+        "message": "customer portal test"
     }
