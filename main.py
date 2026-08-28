@@ -437,7 +437,9 @@ def is_subscription_active(email):
             print(
                 "subscription:",
                 subscription.id,
-                subscription.status
+                subscription.status,
+                "cancel_at_period_end:",
+                subscription.cancel_at_period_end
             )
 
             if subscription.status in (
