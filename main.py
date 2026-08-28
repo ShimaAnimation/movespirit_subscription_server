@@ -6,6 +6,11 @@ import time
 import stripe
 import resend
 
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from pwdlib import PasswordHash
+
 from database import (
     initialize_database,
     get_user_by_email,
@@ -22,7 +27,6 @@ from database import (
     lock_login,
     reset_login_attempts,
     delete_verification_code,
-
     get_password_reset_code,
     save_password_reset_code,
     set_password_reset_verified,
@@ -30,33 +34,26 @@ from database import (
     update_user_password
 )
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 
-from pwdlib import PasswordHash
-
-from database import (
-    initialize_database,
-    get_user_by_email,
-    create_user
-)
+load_dotenv()
 
 app = FastAPI()
 
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+stripe.api_key = os.getenv(
+    "STRIPE_SECRET_KEY"
+)
+
+resend.api_key = os.getenv(
+    "RESEND_API_KEY"
+)
 
 CUSTOMER_PORTAL_RETURN_URL = os.getenv(
     "CUSTOMER_PORTAL_RETURN_URL",
     "https://x.com/ShimaAnimation"
 )
 
-load_dotenv()
-resend.api_key = os.getenv("RESEND_API_KEY")
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-
-app = FastAPI()
 password_hash = PasswordHash.recommended()
+
 initialize_database()
 
 
@@ -367,18 +364,137 @@ def login(
     }
 
 @app.post("/create-customer-portal")
-def create_customer_portal(request: CustomerPortalRequest):
+def create_customer_portal(
+    request: CustomerPortalRequest
+):
+    try:
+        token = request.token.strip()
 
-    print(
-        "create_customer_portal token:",
-        request.token
-    )
+        # -------------------------
+        # token確認
+        # -------------------------
 
-    return {
-        "success": True,
-        "message": "customer portal test"
-    }
+        token_data = get_login_token(
+            token
+        )
 
+        if not token_data:
+            return {
+                "success": False,
+                "reason": "invalid_token"
+            }
+
+        # -------------------------
+        # token有効期限確認
+        # -------------------------
+
+        TOKEN_EXPIRE_SECONDS = (
+            30 * 24 * 60 * 60
+        )
+
+        created_at = token_data[
+            "created_at"
+        ]
+
+        if (
+            time.time() - created_at
+            > TOKEN_EXPIRE_SECONDS
+        ):
+            delete_login_token(
+                token
+            )
+
+            return {
+                "success": False,
+                "reason": "token_expired"
+            }
+
+        # -------------------------
+        # tokenからemail取得
+        # -------------------------
+
+        email = token_data[
+            "email"
+        ].strip().lower()
+
+        print(
+            "customer portal email:",
+            email
+        )
+
+        # -------------------------
+        # Stripe Customerを探す
+        # -------------------------
+
+        customers = stripe.Customer.list(
+            email=email,
+            limit=10
+        )
+
+        if not customers.data:
+            return {
+                "success": False,
+                "reason": "customer_not_found"
+            }
+
+        # -------------------------
+        # 契約中のCustomerを探す
+        # -------------------------
+
+        target_customer = None
+
+        for customer in customers.data:
+
+            subscriptions = stripe.Subscription.list(
+                customer=customer.id,
+                status="all",
+                limit=100
+            )
+
+            for subscription in subscriptions.data:
+
+                if subscription.status in (
+                    "active",
+                    "trialing"
+                ):
+                    target_customer = customer
+                    break
+
+            if target_customer:
+                break
+
+        if not target_customer:
+            return {
+                "success": False,
+                "reason": "subscription_not_active"
+            }
+
+        # -------------------------
+        # Customer Portal URL作成
+        # -------------------------
+
+        session = stripe.billing_portal.Session.create(
+            customer=target_customer.id,
+            return_url=CUSTOMER_PORTAL_RETURN_URL
+        )
+
+        return {
+            "success": True,
+            "url": session.url
+        }
+
+    except Exception as e:
+
+        print(
+            "create-customer-portal ERROR:",
+            repr(e)
+        )
+
+        return {
+            "success": False,
+            "reason": "server_error",
+            "detail": str(e)
+        }
 
 def send_verification_email(
     target_email,
@@ -1074,21 +1190,4 @@ def reset_password(
 
     return {
         "success": True
-    }
-
-
-class CustomerPortalRequest(BaseModel):
-    token: str
-
-@app.post("/create-customer-portal")
-def create_customer_portal(request: CustomerPortalRequest):
-
-    print(
-        "create_customer_portal token:",
-        request.token
-    )
-
-    return {
-        "success": True,
-        "message": "customer portal test"
     }
