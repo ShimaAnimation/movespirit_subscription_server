@@ -116,6 +116,18 @@ def initialize_database():
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS office_login_tokens (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    token TEXT UNIQUE NOT NULL,
+                    company_id TEXT NOT NULL,
+                    created_at DOUBLE PRECISION NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL
+                )
+                """
+            )
         connection.commit()
 
 

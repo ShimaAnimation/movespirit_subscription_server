@@ -404,11 +404,11 @@ def office_login(
                     "reason": "user_not_found"
                 }
 
-            user_id = user[0]
-            company_id = user[1]
-            user_email = user[2]
-            hashed_password = user[3]
-            is_admin = user[4]
+            user_id = user["id"]
+            company_id = user["company_id"]
+            user_email = user["email"]
+            hashed_password = user["password_hash"]
+            is_admin = user["is_admin"]
 
             # -------------------------
             # パスワード確認
@@ -453,8 +453,8 @@ def office_login(
                     "reason": "company_not_found"
                 }
 
-            company_name = company[0]
-            seat_limit = company[2]
+            company_name = company["company_name"]
+            seat_limit = company["seat_limit"]
 
             # -------------------------
             # 以前のOfficeトークン削除
