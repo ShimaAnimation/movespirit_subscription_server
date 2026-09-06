@@ -1299,6 +1299,134 @@ def find_office_subscription(
     }
 
 
+def sync_office_seat_limit(
+    company_id
+):
+
+    if not OFFICE_PRICE_ID:
+        return {
+            "success": False,
+            "reason": "office_price_id_not_set"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # -------------------------
+            # 会社情報取得
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    stripe_subscription_id
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+            if not company:
+                return {
+                    "success": False,
+                    "reason": "company_not_found"
+                }
+
+            subscription_id = company[
+                "stripe_subscription_id"
+            ]
+
+            if not subscription_id:
+                return {
+                    "success": False,
+                    "reason": "stripe_subscription_not_set"
+                }
+
+            # -------------------------
+            # Stripeサブスク取得
+            # -------------------------
+
+            subscription = stripe.Subscription.retrieve(
+                subscription_id
+            )
+
+            if subscription.status not in (
+                "active",
+                "trialing"
+            ):
+                return {
+                    "success": False,
+                    "reason": "subscription_not_active"
+                }
+
+            # -------------------------
+            # Office用Priceを探す
+            # -------------------------
+
+            office_item = None
+
+            for item in subscription[
+                "items"
+            ][
+                "data"
+            ]:
+
+                stripe_price_id = item[
+                    "price"
+                ][
+                    "id"
+                ]
+
+                if (
+                    stripe_price_id
+                    == OFFICE_PRICE_ID
+                ):
+                    office_item = item
+                    break
+
+            if not office_item:
+                return {
+                    "success": False,
+                    "reason": "office_subscription_item_not_found"
+                }
+
+            # -------------------------
+            # 契約人数取得
+            # -------------------------
+
+            quantity = office_item.quantity
+
+            if not quantity:
+                quantity = 1
+
+            # -------------------------
+            # seat_limit更新
+            # -------------------------
+
+            cursor.execute(
+                """
+                UPDATE office_companies
+                SET seat_limit = %s
+                WHERE company_id = %s
+                """,
+                (
+                    quantity,
+                    company_id
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "seat_limit": quantity
+    }
+
+
 class SendVerificationCodeRequest(BaseModel):
     email: str
 
