@@ -518,6 +518,259 @@ def office_login(
     }
 
 
+class OfficeAddUserRequest(BaseModel):
+    token: str
+    email: str
+    password: str
+
+
+@app.post("/office/add-user")
+def office_add_user(
+    request: OfficeAddUserRequest
+):
+
+    token = request.token.strip()
+    email = request.email.strip().lower()
+    password = request.password
+
+    if not token:
+        return {
+            "success": False,
+            "reason": "token_required"
+        }
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if len(password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # -------------------------
+            # Office token確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    company_id,
+                    created_at,
+                    expires_at
+                FROM office_login_tokens
+                WHERE token = %s
+                """,
+                (
+                    token,
+                )
+            )
+
+            token_data = cursor.fetchone()
+
+            if not token_data:
+                return {
+                    "success": False,
+                    "reason": "invalid_token"
+                }
+
+            # -------------------------
+            # token有効期限確認
+            # -------------------------
+
+            if (
+                time.time()
+                > token_data["expires_at"]
+            ):
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE token = %s
+                    """,
+                    (
+                        token,
+                    )
+                )
+
+                connection.commit()
+
+                return {
+                    "success": False,
+                    "reason": "token_expired"
+                }
+
+            admin_email = token_data["email"]
+            company_id = token_data["company_id"]
+
+            # -------------------------
+            # 管理者か確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    is_admin
+                FROM office_users
+                WHERE email = %s
+                AND company_id = %s
+                """,
+                (
+                    admin_email,
+                    company_id
+                )
+            )
+
+            admin_user = cursor.fetchone()
+
+            if not admin_user:
+                return {
+                    "success": False,
+                    "reason": "admin_not_found"
+                }
+
+            if not admin_user["is_admin"]:
+                return {
+                    "success": False,
+                    "reason": "admin_required"
+                }
+
+            # -------------------------
+            # 会社情報取得
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    company_name,
+                    seat_limit
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+            if not company:
+                return {
+                    "success": False,
+                    "reason": "company_not_found"
+                }
+
+            seat_limit = company["seat_limit"]
+
+            # -------------------------
+            # 既存ユーザー確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT id
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+            if cursor.fetchone():
+                return {
+                    "success": False,
+                    "reason": "already_registered"
+                }
+
+            # -------------------------
+            # 現在の登録人数
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS user_count
+                FROM office_users
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            count_data = cursor.fetchone()
+
+            current_user_count = count_data[
+                "user_count"
+            ]
+
+            # -------------------------
+            # 契約人数チェック
+            # -------------------------
+
+            if current_user_count >= seat_limit:
+                return {
+                    "success": False,
+                    "reason": "seat_limit_reached",
+                    "seat_limit": seat_limit,
+                    "current_user_count": current_user_count
+                }
+
+            # -------------------------
+            # パスワードをハッシュ化
+            # -------------------------
+
+            hashed_password = password_hash.hash(
+                password
+            )
+
+            created_at = time.time()
+
+            # -------------------------
+            # 社員追加
+            # -------------------------
+
+            cursor.execute(
+                """
+                INSERT INTO office_users (
+                    company_id,
+                    email,
+                    password_hash,
+                    is_admin,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    company_id,
+                    email,
+                    hashed_password,
+                    0,
+                    created_at
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "email": email,
+        "company_id": company_id,
+        "seat_limit": seat_limit,
+        "current_user_count": (
+            current_user_count + 1
+        )
+    }
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
