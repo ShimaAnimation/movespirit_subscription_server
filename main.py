@@ -573,11 +573,193 @@ def office_login(
     }
 
 
+class OfficeTokenCheckRequest(BaseModel):
+    token: str
+
+@app.post("/office/check-token")
+def office_check_token(
+    request: OfficeTokenCheckRequest
+):
+
+    token = request.token.strip()
+
+    if not token:
+        return {
+            "success": False,
+            "reason": "token_required"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # -------------------------
+            # token取得
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    company_id,
+                    created_at,
+                    expires_at
+                FROM office_login_tokens
+                WHERE token = %s
+                """,
+                (
+                    token,
+                )
+            )
+
+            token_data = cursor.fetchone()
+
+            if not token_data:
+                return {
+                    "success": False,
+                    "reason": "invalid_token"
+                }
+
+            # -------------------------
+            # token有効期限確認
+            # -------------------------
+
+            if time.time() > token_data[
+                "expires_at"
+            ]:
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE token = %s
+                    """,
+                    (
+                        token,
+                    )
+                )
+
+                connection.commit()
+
+                return {
+                    "success": False,
+                    "reason": "token_expired"
+                }
+
+            email = token_data[
+                "email"
+            ]
+
+            company_id = token_data[
+                "company_id"
+            ]
+
+            # -------------------------
+            # Officeユーザー確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    is_admin
+                FROM office_users
+                WHERE email = %s
+                AND company_id = %s
+                """,
+                (
+                    email,
+                    company_id
+                )
+            )
+
+            user = cursor.fetchone()
+
+            if not user:
+                return {
+                    "success": False,
+                    "reason": "user_not_found"
+                }
+
+            # -------------------------
+            # 会社確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    company_name
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+            if not company:
+                return {
+                    "success": False,
+                    "reason": "company_not_found"
+                }
+
+            company_name = company[
+                "company_name"
+            ]
+
+    # -------------------------
+    # Stripe Office契約確認
+    # seat_limit同期
+    # -------------------------
+
+    sync_result = sync_office_seat_limit(
+        company_id
+    )
+
+    if not sync_result["success"]:
+
+        # 契約が無効ならtokenも削除
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE token = %s
+                    """,
+                    (
+                        token,
+                    )
+                )
+
+            connection.commit()
+
+        return {
+            "success": False,
+            "reason": sync_result["reason"]
+        }
+
+    seat_limit = sync_result[
+        "seat_limit"
+    ]
+
+    return {
+        "success": True,
+        "subscription_active": True,
+        "email": email,
+        "company_id": company_id,
+        "company_name": company_name,
+        "is_admin": bool(
+            user["is_admin"]
+        ),
+        "seat_limit": seat_limit
+    }
+
+
 class OfficeAddUserRequest(BaseModel):
     token: str
     email: str
     password: str
-
 
 @app.post("/office/add-user")
 def office_add_user(
