@@ -2001,6 +2001,75 @@ def sync_office_seat_limit(company_id):
     }
 
 
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/verify-code")
+def verify_code(
+    request: VerifyCodeRequest
+):
+    email = request.email.strip().lower()
+    code = request.code.strip()
+
+    verification = get_verification_code(
+        email
+    )
+
+    if not verification:
+        return {
+            "success": False,
+            "reason": "verification_not_found"
+        }
+
+    # 有効期限確認
+    if time.time() > verification["expires_at"]:
+        return {
+            "success": False,
+            "reason": "verification_expired"
+        }
+
+    # 入力されたコードをハッシュ化
+    input_code_hash = hashlib.sha256(
+        code.encode("utf-8")
+    ).hexdigest()
+
+    # DBに保存したハッシュと比較
+    if input_code_hash != verification["code_hash"]:
+        return {
+            "success": False,
+            "reason": "invalid_code"
+        }
+
+    # 本人確認済みにする
+    set_email_verified(
+        email
+    )
+
+    return {
+        "success": True
+    }
+
+
+stripe_key = os.getenv("STRIPE_SECRET_KEY")
+
+print(
+    "Stripe key exists:",
+    bool(stripe_key)
+)
+
+print(
+    "Stripe key prefix:",
+    stripe_key[:8] if stripe_key else None
+)
+
+print(
+    "Stripe key length:",
+    len(stripe_key) if stripe_key else 0
+)
+
+
 class SendVerificationCodeRequest(BaseModel):
     email: str
 
@@ -2131,154 +2200,6 @@ def send_verification_code(
             "reason": "server_error",
             "detail": str(e)
         }
-
-
-class VerifyCodeRequest(BaseModel):
-    email: str
-    code: str
-
-
-@app.post("/verify-code")
-def verify_code(
-    request: VerifyCodeRequest
-):
-    email = request.email.strip().lower()
-    code = request.code.strip()
-
-    verification = get_verification_code(
-        email
-    )
-
-    if not verification:
-        return {
-            "success": False,
-            "reason": "verification_not_found"
-        }
-
-    # 有効期限確認
-    if time.time() > verification["expires_at"]:
-        return {
-            "success": False,
-            "reason": "verification_expired"
-        }
-
-    # 入力されたコードをハッシュ化
-    input_code_hash = hashlib.sha256(
-        code.encode("utf-8")
-    ).hexdigest()
-
-    # DBに保存したハッシュと比較
-    if input_code_hash != verification["code_hash"]:
-        return {
-            "success": False,
-            "reason": "invalid_code"
-        }
-
-    # 本人確認済みにする
-    set_email_verified(
-        email
-    )
-
-    return {
-        "success": True
-    }
-
-
-stripe_key = os.getenv("STRIPE_SECRET_KEY")
-
-print(
-    "Stripe key exists:",
-    bool(stripe_key)
-)
-
-print(
-    "Stripe key prefix:",
-    stripe_key[:8] if stripe_key else None
-)
-
-print(
-    "Stripe key length:",
-    len(stripe_key) if stripe_key else 0
-)
-
-
-class TokenCheckRequest(BaseModel):
-    token: str
-
-
-@app.post("/check-token")
-def check_token(
-    request: TokenCheckRequest
-):
-    token = request.token.strip()
-
-    token_data = get_login_token(
-        token
-    )
-
-    print(
-        "token_data:",
-        token_data
-    )
-
-    if not token_data:
-        return {
-            "success": False,
-            "reason": "invalid_token"
-        }
-
-    TOKEN_EXPIRE_SECONDS = (30 * 24 * 60 * 60)
-
-    created_at = token_data[
-        "created_at"
-    ]
-
-    if (
-        time.time() - created_at
-        > TOKEN_EXPIRE_SECONDS
-    ):
-        delete_login_token(
-            token
-        )
-
-        return {
-            "success": False,
-            "reason": "token_expired"
-        }
-
-    email = token_data[
-        "email"
-    ]
-
-    print(
-        "check-token email:",
-        email
-    )
-
-    active = is_subscription_active(
-        email
-    )
-
-    print(
-        "subscription active:",
-        active
-    )
-
-    if not active:
-        delete_login_token(
-            token
-        )
-
-        return {
-            "success": False,
-            "reason": "subscription_not_active"
-        }
-
-    return {
-        "success": True,
-        "subscription_active": True,
-        "email": email
-    }
 
 
 class SendPasswordResetCodeRequest(BaseModel):
@@ -2645,4 +2566,82 @@ def check_subscription(request: SubscriptionCheckRequest):
         "active": False,
         "email": email,
         "reason": "active_subscription_not_found"
+    }
+
+class TokenCheckRequest(BaseModel):
+    token: str
+
+
+@app.post("/check-token")
+def check_token(
+    request: TokenCheckRequest
+):
+    token = request.token.strip()
+
+    token_data = get_login_token(
+        token
+    )
+
+    print(
+        "token_data:",
+        token_data
+    )
+
+    if not token_data:
+        return {
+            "success": False,
+            "reason": "invalid_token"
+        }
+
+    TOKEN_EXPIRE_SECONDS = (30 * 24 * 60 * 60)
+
+    created_at = token_data[
+        "created_at"
+    ]
+
+    if (
+        time.time() - created_at
+        > TOKEN_EXPIRE_SECONDS
+    ):
+        delete_login_token(
+            token
+        )
+
+        return {
+            "success": False,
+            "reason": "token_expired"
+        }
+
+    email = token_data[
+        "email"
+    ]
+
+    print(
+        "check-token email:",
+        email
+    )
+
+    active = is_subscription_active(
+        email
+    )
+
+    print(
+        "subscription active:",
+        active
+    )
+
+    if not active:
+        delete_login_token(
+            token
+        )
+
+        return {
+            "success": False,
+            "reason": "subscription_not_active"
+        }
+
+    return {
+        "success": True,
+        "subscription_active": True,
+        "email": email
     }
