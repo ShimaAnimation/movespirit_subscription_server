@@ -49,6 +49,12 @@ OFFICE_PRICE_ID = os.getenv(
     "STRIPE_OFFICE_PRICE_ID"
 )
 
+UNLIMITED_TEST_COMPANY_ID = (
+    "a912da44-58e6-4222-bb2e-ef42f68cfbec"
+)
+
+UNLIMITED_TEST_SEAT_LIMIT = 999999
+
 resend.api_key = os.getenv(
     "RESEND_API_KEY"
 )
@@ -1484,6 +1490,38 @@ def find_office_subscription(
 def sync_office_seat_limit(
     company_id
 ):
+
+    # -------------------------
+    # 無制限無料テスト会社
+    # -------------------------
+
+    if company_id == UNLIMITED_TEST_COMPANY_ID:
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    UPDATE office_companies
+                    SET seat_limit = %s
+                    WHERE company_id = %s
+                    """,
+                    (
+                        UNLIMITED_TEST_SEAT_LIMIT,
+                        company_id
+                    )
+                )
+
+            connection.commit()
+
+        return {
+            "success": True,
+            "seat_limit": UNLIMITED_TEST_SEAT_LIMIT
+        }
+
+    # -------------------------
+    # 通常のOffice契約
+    # -------------------------
 
     if not OFFICE_PRICE_ID:
         return {
