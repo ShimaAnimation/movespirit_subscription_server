@@ -74,10 +74,6 @@ password_hash = PasswordHash.recommended()
 initialize_database()
 
 
-class SubscriptionCheckRequest(BaseModel):
-    email: str
-
-
 @app.get("/")
 def root():
     return {
@@ -92,52 +88,6 @@ def stripe_check():
     return {
         "stripe_connected": True,
         "account_id": account.id
-    }
-
-
-@app.post("/check-subscription")
-def check_subscription(request: SubscriptionCheckRequest):
-
-    email = request.email.strip().lower()
-
-    customers = stripe.Customer.list(
-        email=email,
-        limit=10
-    )
-
-    if not customers.data:
-        return {
-            "active": False,
-            "email": email,
-            "reason": "customer_not_found"
-        }
-
-    for customer in customers.data:
-
-        subscriptions = stripe.Subscription.list(
-            customer=customer.id,
-            status="all",
-            limit=100
-        )
-
-        for subscription in subscriptions.data:
-
-            if subscription.status in (
-                "active",
-                "trialing"
-            ):
-                return {
-                    "active": True,
-                    "email": email,
-                    "customer_id": customer.id,
-                    "subscription_id": subscription.id,
-                    "subscription_status": subscription.status
-                }
-
-    return {
-        "active": False,
-        "email": email,
-        "reason": "active_subscription_not_found"
     }
 
 
@@ -2647,4 +2597,52 @@ def reset_password(
 
     return {
         "success": True
+    }
+
+class SubscriptionCheckRequest(BaseModel):
+    email: str
+
+@app.post("/check-subscription")
+def check_subscription(request: SubscriptionCheckRequest):
+
+    email = request.email.strip().lower()
+
+    customers = stripe.Customer.list(
+        email=email,
+        limit=10
+    )
+
+    if not customers.data:
+        return {
+            "active": False,
+            "email": email,
+            "reason": "customer_not_found"
+        }
+
+    for customer in customers.data:
+
+        subscriptions = stripe.Subscription.list(
+            customer=customer.id,
+            status="all",
+            limit=100
+        )
+
+        for subscription in subscriptions.data:
+
+            if subscription.status in (
+                "active",
+                "trialing"
+            ):
+                return {
+                    "active": True,
+                    "email": email,
+                    "customer_id": customer.id,
+                    "subscription_id": subscription.id,
+                    "subscription_status": subscription.status
+                }
+
+    return {
+        "active": False,
+        "email": email,
+        "reason": "active_subscription_not_found"
     }
