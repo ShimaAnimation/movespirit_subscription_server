@@ -348,6 +348,176 @@ def office_register(
     }
 
 
+class OfficeLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/office/login")
+def office_login(
+    request: OfficeLoginRequest
+):
+
+    email = request.email.strip().lower()
+    password = request.password
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if not password:
+        return {
+            "success": False,
+            "reason": "password_required"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # -------------------------
+            # Officeユーザー取得
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    company_id,
+                    email,
+                    password_hash,
+                    is_admin
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+            user = cursor.fetchone()
+
+            if not user:
+                return {
+                    "success": False,
+                    "reason": "user_not_found"
+                }
+
+            user_id = user[0]
+            company_id = user[1]
+            user_email = user[2]
+            hashed_password = user[3]
+            is_admin = user[4]
+
+            # -------------------------
+            # パスワード確認
+            # -------------------------
+
+            password_ok = password_hash.verify(
+                password,
+                hashed_password
+            )
+
+            if not password_ok:
+                return {
+                    "success": False,
+                    "reason": "invalid_password"
+                }
+
+            # -------------------------
+            # 会社情報確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    company_name,
+                    admin_email,
+                    seat_limit,
+                    stripe_customer_id,
+                    stripe_subscription_id
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+            if not company:
+                return {
+                    "success": False,
+                    "reason": "company_not_found"
+                }
+
+            company_name = company[0]
+            seat_limit = company[2]
+
+            # -------------------------
+            # 以前のOfficeトークン削除
+            # -------------------------
+
+            cursor.execute(
+                """
+                DELETE FROM office_login_tokens
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+            # -------------------------
+            # 新しいトークン生成
+            # -------------------------
+
+            token = secrets.token_urlsafe(
+                48
+            )
+
+            created_at = time.time()
+
+            expires_at = (
+                created_at
+                + (30 * 24 * 60 * 60)
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO office_login_tokens (
+                    email,
+                    token,
+                    company_id,
+                    created_at,
+                    expires_at
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    email,
+                    token,
+                    company_id,
+                    created_at,
+                    expires_at
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "token": token,
+        "email": user_email,
+        "company_id": company_id,
+        "company_name": company_name,
+        "is_admin": bool(is_admin),
+        "seat_limit": seat_limit
+    }
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
