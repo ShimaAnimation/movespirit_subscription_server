@@ -1197,61 +1197,6 @@ def find_office_subscription(
             "reason": "office_price_id_not_set"
         }
 
-    customers = stripe.Customer.list(
-        email=email,
-        limit=10
-    )
-
-    for customer in customers.data:
-
-        subscriptions = stripe.Subscription.list(
-            customer=customer.id,
-            status="all",
-            limit=100
-        )
-
-        for subscription in subscriptions.data:
-
-            if subscription.status not in (
-                "active",
-                "trialing"
-            ):
-                continue
-
-            for item in subscription["items"]["data"]:
-
-                price = item["price"]
-
-                if price["id"] != OFFICE_PRICE_ID:
-                    continue
-
-                quantity = item.get(
-                    "quantity",
-                    1
-                )
-
-                if not quantity:
-                    quantity = 1
-
-                return {
-                    "success": True,
-                    "customer_id": customer.id,
-                    "subscription_id": subscription.id,
-                    "quantity": quantity
-                }
-
-    return {
-        "success": False,
-        "reason": "office_subscription_not_active"
-    }
-
-
-def find_office_subscription(
-    email
-):
-
-    email = email.strip().lower()
-
     print(
         "OFFICE_PRICE_ID:",
         OFFICE_PRICE_ID
@@ -1312,16 +1257,13 @@ def find_office_subscription(
                 if stripe_price_id != OFFICE_PRICE_ID:
                     continue
 
-                quantity = item.get(
-                    "quantity",
-                    1
-                )
+                quantity = item.quantity
 
                 if not quantity:
                     quantity = 1
 
                 print(
-                    "OFFICE SUBSCRIPTION FOUND",
+                    "OFFICE SUBSCRIPTION FOUND:",
                     quantity
                 )
 
@@ -1340,7 +1282,6 @@ def find_office_subscription(
 
 class SendVerificationCodeRequest(BaseModel):
     email: str
-
 
 @app.post("/send-verification-code")
 def send_verification_code(
