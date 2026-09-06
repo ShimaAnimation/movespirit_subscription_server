@@ -489,8 +489,27 @@ def office_login(
                     "reason": "company_not_found"
                 }
 
-            company_name = company["company_name"]
-            seat_limit = company["seat_limit"]
+            company_name = company[
+                "company_name"
+            ]
+
+            # -------------------------
+            # Stripe Office契約確認
+            # -------------------------
+
+            sync_result = sync_office_seat_limit(
+                company_id
+            )
+
+            if not sync_result["success"]:
+                return {
+                    "success": False,
+                    "reason": sync_result["reason"]
+                }
+
+            seat_limit = sync_result[
+                "seat_limit"
+            ]
 
             # -------------------------
             # 以前のOfficeトークン削除
