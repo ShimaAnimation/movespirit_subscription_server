@@ -2442,3 +2442,213 @@ def office_register_trial(
         "trial_days": 90,
         "trial_expires_at": trial_expires_at
     }
+
+class OfficeAddUsersRequest(BaseModel):
+    token: str
+    emails: list[str]
+    password: str
+
+@app.post("/office/add-users")
+def office_add_users(
+    request: OfficeAddUsersRequest
+):
+
+    token = request.token.strip()
+    password = request.password
+
+    if not token:
+        return {
+            "success": False,
+            "reason": "token_required"
+        }
+
+    if len(password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    if not request.emails:
+        return {
+            "success": False,
+            "reason": "emails_required"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    company_id,
+                    expires_at
+                FROM office_login_tokens
+                WHERE token = %s
+                """,
+                (
+                    token,
+                )
+            )
+
+            token_data = cursor.fetchone()
+
+            if not token_data:
+                return {
+                    "success": False,
+                    "reason": "invalid_token"
+                }
+
+            if time.time() > token_data["expires_at"]:
+                return {
+                    "success": False,
+                    "reason": "token_expired"
+                }
+
+            admin_email = token_data["email"]
+            company_id = token_data["company_id"]
+
+            cursor.execute(
+                """
+                SELECT
+                    is_admin
+                FROM office_users
+                WHERE email = %s
+                AND company_id = %s
+                """,
+                (
+                    admin_email,
+                    company_id
+                )
+            )
+
+            admin_user = cursor.fetchone()
+
+            if not admin_user:
+                return {
+                    "success": False,
+                    "reason": "admin_not_found"
+                }
+
+            if not admin_user["is_admin"]:
+                return {
+                    "success": False,
+                    "reason": "admin_required"
+                }
+
+            sync_result = sync_office_seat_limit(
+                company_id
+            )
+
+            if not sync_result["success"]:
+                return {
+                    "success": False,
+                    "reason": sync_result["reason"]
+                }
+
+            seat_limit = sync_result["seat_limit"]
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS user_count
+                FROM office_users
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            count_data = cursor.fetchone()
+
+            current_user_count = (
+                count_data["user_count"]
+            )
+
+            added_users = []
+            skipped_users = []
+
+            for target_email in request.emails:
+
+                email = target_email.strip().lower()
+
+                if not email:
+                    continue
+
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM office_users
+                    WHERE email = %s
+                    """,
+                    (
+                        email,
+                    )
+                )
+
+                if cursor.fetchone():
+
+                    skipped_users.append(
+                        {
+                            "email": email,
+                            "reason": "already_registered"
+                        }
+                    )
+
+                    continue
+
+                if (
+                    current_user_count
+                    + len(added_users)
+                    >= seat_limit
+                ):
+                    skipped_users.append(
+                        {
+                            "email": email,
+                            "reason": "seat_limit_reached"
+                        }
+                    )
+
+                    continue
+
+                hashed_password = password_hash.hash(
+                    password
+                )
+
+                created_at = time.time()
+
+                cursor.execute(
+                    """
+                    INSERT INTO office_users (
+                        company_id,
+                        email,
+                        password_hash,
+                        is_admin,
+                        created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        company_id,
+                        email,
+                        hashed_password,
+                        0,
+                        created_at
+                    )
+                )
+
+                added_users.append(
+                    email
+                )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "seat_limit": seat_limit,
+        "added_count": len(added_users),
+        "skipped_count": len(skipped_users),
+        "added_users": added_users,
+        "skipped_users": skipped_users
+    }
