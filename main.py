@@ -45,9 +45,14 @@ stripe.api_key = os.getenv(
     "STRIPE_SECRET_KEY"
 )
 
+OFFICE_PRICE_ID = os.getenv(
+    "STRIPE_OFFICE_PRICE_ID"
+)
+
 resend.api_key = os.getenv(
     "RESEND_API_KEY"
 )
+
 
 CUSTOMER_PORTAL_RETURN_URL = os.getenv(
     "CUSTOMER_PORTAL_RETURN_URL",
@@ -275,6 +280,32 @@ def office_register(
                 }
 
             # -------------------------
+            # Stripe Office契約確認
+            # -------------------------
+
+            stripe_result = find_office_subscription(
+                email
+            )
+
+            if not stripe_result["success"]:
+                return {
+                    "success": False,
+                    "reason": stripe_result["reason"]
+                }
+
+            stripe_customer_id = stripe_result[
+                "customer_id"
+            ]
+
+            stripe_subscription_id = stripe_result[
+                "subscription_id"
+            ]
+
+            seat_limit = stripe_result[
+                "quantity"
+            ]
+
+            # -------------------------
             # 会社ID作成
             # -------------------------
 
@@ -302,16 +333,20 @@ def office_register(
                     company_id,
                     company_name,
                     admin_email,
+                    stripe_customer_id,
+                    stripe_subscription_id,
                     seat_limit,
                     created_at
                 )
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     company_id,
                     company_name,
                     email,
-                    1,
+                    stripe_customer_id,
+                    stripe_subscription_id,
+                    seat_limit,
                     created_at
                 )
             )
@@ -344,7 +379,8 @@ def office_register(
 
     return {
         "success": True,
-        "company_id": company_id
+        "company_id": company_id,
+        "seat_limit": seat_limit
     }
 
 
@@ -1147,6 +1183,162 @@ def is_subscription_active(email):
                 return True
 
     return False
+
+
+def find_office_subscription(
+    email
+):
+
+    email = email.strip().lower()
+
+    if not OFFICE_PRICE_ID:
+        return {
+            "success": False,
+            "reason": "office_price_id_not_set"
+        }
+
+    customers = stripe.Customer.list(
+        email=email,
+        limit=10
+    )
+
+    for customer in customers.data:
+
+        subscriptions = stripe.Subscription.list(
+            customer=customer.id,
+            status="all",
+            limit=100
+        )
+
+        for subscription in subscriptions.data:
+
+            if subscription.status not in (
+                "active",
+                "trialing"
+            ):
+                continue
+
+            for item in subscription["items"]["data"]:
+
+                price = item["price"]
+
+                if price["id"] != OFFICE_PRICE_ID:
+                    continue
+
+                quantity = item.get(
+                    "quantity",
+                    1
+                )
+
+                if not quantity:
+                    quantity = 1
+
+                return {
+                    "success": True,
+                    "customer_id": customer.id,
+                    "subscription_id": subscription.id,
+                    "quantity": quantity
+                }
+
+    return {
+        "success": False,
+        "reason": "office_subscription_not_active"
+    }
+
+
+def sync_office_seat_limit(
+    company_id
+):
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    stripe_subscription_id
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+            if not company:
+                return {
+                    "success": False,
+                    "reason": "company_not_found"
+                }
+
+            subscription_id = company[
+                "stripe_subscription_id"
+            ]
+
+            if not subscription_id:
+                return {
+                    "success": False,
+                    "reason": "stripe_subscription_not_set"
+                }
+
+            subscription = stripe.Subscription.retrieve(
+                subscription_id
+            )
+
+            if subscription.status not in (
+                "active",
+                "trialing"
+            ):
+                return {
+                    "success": False,
+                    "reason": "subscription_not_active"
+                }
+
+            office_item = None
+
+            for item in subscription["items"]["data"]:
+
+                if (
+                    item["price"]["id"]
+                    == OFFICE_PRICE_ID
+                ):
+                    office_item = item
+                    break
+
+            if not office_item:
+                return {
+                    "success": False,
+                    "reason": "office_subscription_item_not_found"
+                }
+
+            quantity = office_item.get(
+                "quantity",
+                1
+            )
+
+            if not quantity:
+                quantity = 1
+
+            cursor.execute(
+                """
+                UPDATE office_companies
+                SET seat_limit = %s
+                WHERE company_id = %s
+                """,
+                (
+                    quantity,
+                    company_id
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "seat_limit": quantity
+    }
 
 
 class SendVerificationCodeRequest(BaseModel):
