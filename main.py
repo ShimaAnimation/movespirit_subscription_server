@@ -49,6 +49,10 @@ OFFICE_PRICE_ID = os.getenv(
     "STRIPE_OFFICE_PRICE_ID"
 )
 
+OFFICE_ADMIN_SECRET = os.getenv(
+    "OFFICE_ADMIN_SECRET"
+)
+
 UNLIMITED_TEST_COMPANY_ID = (
     "a912da44-58e6-4222-bb2e-ef42f68cfbec"
 )
@@ -1487,48 +1491,7 @@ def find_office_subscription(
     }
 
 
-def sync_office_seat_limit(
-    company_id
-):
-
-    # -------------------------
-    # 無制限無料テスト会社
-    # -------------------------
-
-    if company_id == UNLIMITED_TEST_COMPANY_ID:
-
-        with get_connection() as connection:
-            with connection.cursor() as cursor:
-
-                cursor.execute(
-                    """
-                    UPDATE office_companies
-                    SET seat_limit = %s
-                    WHERE company_id = %s
-                    """,
-                    (
-                        UNLIMITED_TEST_SEAT_LIMIT,
-                        company_id
-                    )
-                )
-
-            connection.commit()
-
-        return {
-            "success": True,
-            "seat_limit": UNLIMITED_TEST_SEAT_LIMIT
-        }
-
-    # -------------------------
-    # 通常のOffice契約
-    # -------------------------
-
-    if not OFFICE_PRICE_ID:
-        return {
-            "success": False,
-            "reason": "office_price_id_not_set"
-        }
-
+def sync_office_seat_limit(company_id):
     with get_connection() as connection:
         with connection.cursor() as cursor:
 
@@ -1539,7 +1502,9 @@ def sync_office_seat_limit(
             cursor.execute(
                 """
                 SELECT
-                    stripe_subscription_id
+                    stripe_subscription_id,
+                    is_unlimited_trial,
+                    trial_expires_at
                 FROM office_companies
                 WHERE company_id = %s
                 """,
@@ -1556,6 +1521,70 @@ def sync_office_seat_limit(
                     "reason": "company_not_found"
                 }
 
+            # =========================
+            # 90日無料テスト
+            # =========================
+
+            is_unlimited_trial = bool(
+                company[
+                    "is_unlimited_trial"
+                ]
+            )
+
+            trial_expires_at = company[
+                "trial_expires_at"
+            ]
+
+            if is_unlimited_trial:
+
+                # 有効期限なしは異常
+                if not trial_expires_at:
+                    return {
+                        "success": False,
+                        "reason": "trial_expiration_not_set"
+                    }
+
+                # 90日終了
+                if time.time() > trial_expires_at:
+                    return {
+                        "success": False,
+                        "reason": "trial_expired"
+                    }
+
+                # 無料テスト中は実質無制限
+                seat_limit = 999999
+
+                cursor.execute(
+                    """
+                    UPDATE office_companies
+                    SET seat_limit = %s
+                    WHERE company_id = %s
+                    """,
+                    (
+                        seat_limit,
+                        company_id
+                    )
+                )
+
+                connection.commit()
+
+                return {
+                    "success": True,
+                    "seat_limit": seat_limit,
+                    "trial": True,
+                    "trial_expires_at": trial_expires_at
+                }
+
+            # =========================
+            # ここから通常の有料Office
+            # =========================
+
+            if not OFFICE_PRICE_ID:
+                return {
+                    "success": False,
+                    "reason": "office_price_id_not_set"
+                }
+
             subscription_id = company[
                 "stripe_subscription_id"
             ]
@@ -1565,10 +1594,6 @@ def sync_office_seat_limit(
                     "success": False,
                     "reason": "stripe_subscription_not_set"
                 }
-
-            # -------------------------
-            # Stripeサブスク取得
-            # -------------------------
 
             subscription = stripe.Subscription.retrieve(
                 subscription_id
@@ -1582,10 +1607,6 @@ def sync_office_seat_limit(
                     "success": False,
                     "reason": "subscription_not_active"
                 }
-
-            # -------------------------
-            # Office用Priceを探す
-            # -------------------------
 
             office_item = None
 
@@ -1614,18 +1635,10 @@ def sync_office_seat_limit(
                     "reason": "office_subscription_item_not_found"
                 }
 
-            # -------------------------
-            # 契約人数取得
-            # -------------------------
-
             quantity = office_item.quantity
 
             if not quantity:
                 quantity = 1
-
-            # -------------------------
-            # seat_limit更新
-            # -------------------------
 
             cursor.execute(
                 """
@@ -1643,7 +1656,8 @@ def sync_office_seat_limit(
 
     return {
         "success": True,
-        "seat_limit": quantity
+        "seat_limit": quantity,
+        "trial": False
     }
 
 
@@ -2243,4 +2257,188 @@ def reset_password(
 
     return {
         "success": True
+    }
+
+
+class OfficeTrialRegisterRequest(BaseModel):
+    admin_secret: str
+    company_name: str
+    email: str
+    password: str
+
+
+@app.post("/office/register-trial")
+def office_register_trial(
+    request: OfficeTrialRegisterRequest
+):
+
+    # -------------------------
+    # 開発者確認
+    # -------------------------
+
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret
+        != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    company_name = (
+        request.company_name
+        .strip()
+    )
+
+    email = (
+        request.email
+        .strip()
+        .lower()
+    )
+
+    password = request.password
+
+    if not company_name:
+        return {
+            "success": False,
+            "reason": "company_name_required"
+        }
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if len(password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # -------------------------
+            # 既存Officeユーザー確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT id
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+            if cursor.fetchone():
+                return {
+                    "success": False,
+                    "reason": "already_registered"
+                }
+
+            company_id = str(
+                uuid.uuid4()
+            )
+
+            hashed_password = (
+                password_hash.hash(
+                    password
+                )
+            )
+
+            created_at = time.time()
+
+            # -------------------------
+            # 90日後
+            # -------------------------
+
+            trial_expires_at = (
+                created_at
+                + (
+                    90
+                    * 24
+                    * 60
+                    * 60
+                )
+            )
+
+            # -------------------------
+            # 会社登録
+            # -------------------------
+
+            cursor.execute(
+                """
+                INSERT INTO office_companies (
+                    company_id,
+                    company_name,
+                    admin_email,
+                    seat_limit,
+                    created_at,
+                    is_unlimited_trial,
+                    trial_expires_at
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                )
+                """,
+                (
+                    company_id,
+                    company_name,
+                    email,
+                    999999,
+                    created_at,
+                    1,
+                    trial_expires_at
+                )
+            )
+
+            # -------------------------
+            # 管理者登録
+            # -------------------------
+
+            cursor.execute(
+                """
+                INSERT INTO office_users (
+                    company_id,
+                    email,
+                    password_hash,
+                    is_admin,
+                    created_at
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                )
+                """,
+                (
+                    company_id,
+                    email,
+                    hashed_password,
+                    1,
+                    created_at
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "seat_limit": 999999,
+        "trial_days": 90,
+        "trial_expires_at": trial_expires_at
     }
