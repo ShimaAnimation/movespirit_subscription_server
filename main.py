@@ -141,97 +141,6 @@ def check_subscription(request: SubscriptionCheckRequest):
     }
 
 
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-
-
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-
-
-@app.post("/register")
-def register(
-    request: RegisterRequest
-):
-    email = request.email.strip().lower()
-    password = request.password
-
-    if not email:
-        return {
-            "success": False,
-            "reason": "email_required"
-        }
-
-    if len(password) < 8:
-        return {
-            "success": False,
-            "reason": "password_too_short"
-        }
-
-    existing_user = get_user_by_email(
-        email
-    )
-
-    if existing_user:
-        return {
-            "success": False,
-            "reason": "already_registered"
-        }
-
-    # -------------------------
-    # メール本人確認済みか確認
-    # -------------------------
-
-    verification = get_verification_code(
-        email
-    )
-
-    if not verification:
-        return {
-            "success": False,
-            "reason": "email_not_verified"
-        }
-
-    if verification["verified"] != 1:
-        return {
-            "success": False,
-            "reason": "email_not_verified"
-        }
-
-    # -------------------------
-    # 念のためStripe契約も再確認
-    # -------------------------
-
-    if not is_subscription_active(email):
-        return {
-            "success": False,
-            "reason": "subscription_not_active"
-        }
-
-    # -------------------------
-    # パスワード保存
-    # -------------------------
-
-    hashed_password = password_hash.hash(
-        password
-    )
-
-    create_user(
-        email,
-        hashed_password
-    )
-
-    delete_verification_code(
-        email
-    )
-
-    return {
-        "success": True
-    }
-
-
 class OfficeRegisterRequest(BaseModel):
     company_name: str
     email: str
@@ -1416,6 +1325,92 @@ def office_add_users(
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/register")
+def register(
+    request: RegisterRequest
+):
+    email = request.email.strip().lower()
+    password = request.password
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if len(password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    existing_user = get_user_by_email(
+        email
+    )
+
+    if existing_user:
+        return {
+            "success": False,
+            "reason": "already_registered"
+        }
+
+    # -------------------------
+    # メール本人確認済みか確認
+    # -------------------------
+
+    verification = get_verification_code(
+        email
+    )
+
+    if not verification:
+        return {
+            "success": False,
+            "reason": "email_not_verified"
+        }
+
+    if verification["verified"] != 1:
+        return {
+            "success": False,
+            "reason": "email_not_verified"
+        }
+
+    # -------------------------
+    # 念のためStripe契約も再確認
+    # -------------------------
+
+    if not is_subscription_active(email):
+        return {
+            "success": False,
+            "reason": "subscription_not_active"
+        }
+
+    # -------------------------
+    # パスワード保存
+    # -------------------------
+
+    hashed_password = password_hash.hash(
+        password
+    )
+
+    create_user(
+        email,
+        hashed_password
+    )
+
+    delete_verification_code(
+        email
+    )
+
+    return {
+        "success": True
+    }
 
 
 class CustomerPortalRequest(BaseModel):
