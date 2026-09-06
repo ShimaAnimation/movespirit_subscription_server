@@ -1246,98 +1246,95 @@ def find_office_subscription(
     }
 
 
-def sync_office_seat_limit(
-    company_id
+def find_office_subscription(
+    email
 ):
 
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
+    email = email.strip().lower()
 
-            cursor.execute(
-                """
-                SELECT
-                    stripe_subscription_id
-                FROM office_companies
-                WHERE company_id = %s
-                """,
-                (
-                    company_id,
-                )
-            )
+    print(
+        "OFFICE_PRICE_ID:",
+        OFFICE_PRICE_ID
+    )
 
-            company = cursor.fetchone()
+    customers = stripe.Customer.list(
+        email=email,
+        limit=10
+    )
 
-            if not company:
-                return {
-                    "success": False,
-                    "reason": "company_not_found"
-                }
+    print(
+        "customer count:",
+        len(customers.data)
+    )
 
-            subscription_id = company[
-                "stripe_subscription_id"
-            ]
+    for customer in customers.data:
 
-            if not subscription_id:
-                return {
-                    "success": False,
-                    "reason": "stripe_subscription_not_set"
-                }
+        print(
+            "customer:",
+            customer.id,
+            customer.email
+        )
 
-            subscription = stripe.Subscription.retrieve(
-                subscription_id
+        subscriptions = stripe.Subscription.list(
+            customer=customer.id,
+            status="all",
+            limit=100
+        )
+
+        for subscription in subscriptions.data:
+
+            print(
+                "subscription:",
+                subscription.id,
+                subscription.status
             )
 
             if subscription.status not in (
                 "active",
                 "trialing"
             ):
-                return {
-                    "success": False,
-                    "reason": "subscription_not_active"
-                }
-
-            office_item = None
+                continue
 
             for item in subscription["items"]["data"]:
 
-                if (
-                    item["price"]["id"]
-                    == OFFICE_PRICE_ID
-                ):
-                    office_item = item
-                    break
+                stripe_price_id = item["price"]["id"]
 
-            if not office_item:
+                print(
+                    "Stripe price ID:",
+                    stripe_price_id
+                )
+
+                print(
+                    "Expected Office price ID:",
+                    OFFICE_PRICE_ID
+                )
+
+                if stripe_price_id != OFFICE_PRICE_ID:
+                    continue
+
+                quantity = item.get(
+                    "quantity",
+                    1
+                )
+
+                if not quantity:
+                    quantity = 1
+
+                print(
+                    "OFFICE SUBSCRIPTION FOUND",
+                    quantity
+                )
+
                 return {
-                    "success": False,
-                    "reason": "office_subscription_item_not_found"
+                    "success": True,
+                    "customer_id": customer.id,
+                    "subscription_id": subscription.id,
+                    "quantity": quantity
                 }
 
-            quantity = office_item.get(
-                "quantity",
-                1
-            )
-
-            if not quantity:
-                quantity = 1
-
-            cursor.execute(
-                """
-                UPDATE office_companies
-                SET seat_limit = %s
-                WHERE company_id = %s
-                """,
-                (
-                    quantity,
-                    company_id
-                )
-            )
-
-        connection.commit()
-
     return {
-        "success": True,
-        "seat_limit": quantity
+        "success": False,
+        "reason": "office_subscription_not_active"
     }
 
 
