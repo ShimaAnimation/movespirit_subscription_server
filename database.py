@@ -89,6 +89,33 @@ def initialize_database():
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS office_companies (
+                    id SERIAL PRIMARY KEY,
+                    company_id TEXT UNIQUE NOT NULL,
+                    company_name TEXT NOT NULL,
+                    admin_email TEXT NOT NULL,
+                    stripe_customer_id TEXT,
+                    stripe_subscription_id TEXT,
+                    seat_limit INTEGER NOT NULL DEFAULT 1,
+                    created_at DOUBLE PRECISION NOT NULL
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS office_users (
+                    id SERIAL PRIMARY KEY,
+                    company_id TEXT NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    is_admin INTEGER NOT NULL DEFAULT 0,
+                    created_at DOUBLE PRECISION NOT NULL
+                )
+                """
+            )
         connection.commit()
 
 

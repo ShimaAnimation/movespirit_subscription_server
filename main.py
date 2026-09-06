@@ -2,6 +2,7 @@ import os
 import hashlib
 import secrets
 import time
+import uuid
 
 import stripe
 import resend
@@ -13,6 +14,7 @@ from pwdlib import PasswordHash
 
 from database import (
     initialize_database,
+    get_connection,
     get_user_by_email,
     create_user,
     save_verification_code,
@@ -212,6 +214,137 @@ def register(
 
     return {
         "success": True
+    }
+
+
+class OfficeRegisterRequest(BaseModel):
+    company_name: str
+    email: str
+    password: str
+
+
+@app.post("/office/register")
+def office_register(
+    request: OfficeRegisterRequest
+):
+
+    company_name = request.company_name.strip()
+    email = request.email.strip().lower()
+    password = request.password
+
+    if not company_name:
+        return {
+            "success": False,
+            "reason": "company_name_required"
+        }
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if len(password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # -------------------------
+            # 既存Officeユーザー確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT id
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+            if cursor.fetchone():
+                return {
+                    "success": False,
+                    "reason": "already_registered"
+                }
+
+            # -------------------------
+            # 会社ID作成
+            # -------------------------
+
+            company_id = str(
+                uuid.uuid4()
+            )
+
+            # -------------------------
+            # パスワードをハッシュ化
+            # -------------------------
+
+            hashed_password = password_hash.hash(
+                password
+            )
+
+            created_at = time.time()
+
+            # -------------------------
+            # 会社を登録
+            # -------------------------
+
+            cursor.execute(
+                """
+                INSERT INTO office_companies (
+                    company_id,
+                    company_name,
+                    admin_email,
+                    seat_limit,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    company_id,
+                    company_name,
+                    email,
+                    1,
+                    created_at
+                )
+            )
+
+            # -------------------------
+            # 管理者ユーザーを登録
+            # -------------------------
+
+            cursor.execute(
+                """
+                INSERT INTO office_users (
+                    company_id,
+                    email,
+                    password_hash,
+                    is_admin,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    company_id,
+                    email,
+                    hashed_password,
+                    1,
+                    created_at
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "company_id": company_id
     }
 
 
