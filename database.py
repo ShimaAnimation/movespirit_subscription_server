@@ -145,6 +145,13 @@ def initialize_database():
                 """
             )
 
+            cursor.execute(
+                """
+                ALTER TABLE office_users
+                ADD COLUMN IF NOT EXISTS is_active
+                INTEGER NOT NULL DEFAULT 1
+                """
+            )
         connection.commit()
 
 
