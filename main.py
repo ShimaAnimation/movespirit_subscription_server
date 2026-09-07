@@ -437,6 +437,186 @@ def office_register_trial(
     }
 
 
+class OfficeConvertTrialToPaidRequest(BaseModel):
+    admin_secret: str
+    company_id: str
+
+
+@app.post("/office/convert-trial-to-paid")
+def office_convert_trial_to_paid(
+    request: OfficeConvertTrialToPaidRequest
+):
+
+    # =========================================
+    # 開発者確認
+    # =========================================
+
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret
+        != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    company_id = request.company_id.strip()
+
+    if not company_id:
+        return {
+            "success": False,
+            "reason": "company_id_required"
+        }
+
+    # =========================================
+    # 会社情報取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    company_name,
+                    admin_email,
+                    is_unlimited_trial
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+    if not company:
+        return {
+            "success": False,
+            "reason": "company_not_found"
+        }
+
+    # =========================================
+    # トライアル会社か確認
+    # =========================================
+
+    if not bool(
+        company["is_unlimited_trial"]
+    ):
+        return {
+            "success": False,
+            "reason": "not_trial_company"
+        }
+
+    admin_email = (
+        company["admin_email"]
+        .strip()
+        .lower()
+    )
+
+    # =========================================
+    # Stripe Office契約確認
+    # =========================================
+
+    subscription_result = (
+        find_office_subscription(
+            admin_email
+        )
+    )
+
+    if not subscription_result[
+        "success"
+    ]:
+        return {
+            "success": False,
+            "reason": subscription_result.get(
+                "reason",
+                "office_subscription_not_active"
+            )
+        }
+
+    stripe_customer_id = (
+        subscription_result[
+            "customer_id"
+        ]
+    )
+
+    stripe_subscription_id = (
+        subscription_result[
+            "subscription_id"
+        ]
+    )
+
+    seat_limit = int(
+        subscription_result[
+            "quantity"
+        ]
+    )
+
+    # =========================================
+    # 有料Officeへ切り替え
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                UPDATE office_companies
+                SET
+                    stripe_customer_id = %s,
+                    stripe_subscription_id = %s,
+                    seat_limit = %s,
+                    is_unlimited_trial = 0,
+                    trial_expires_at = NULL
+                WHERE company_id = %s
+                """,
+                (
+                    stripe_customer_id,
+                    stripe_subscription_id,
+                    seat_limit,
+                    company_id
+                )
+            )
+
+        connection.commit()
+
+    # =========================================
+    # トライアル中に発行された共通ログイントークン削除
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                DELETE FROM office_login_tokens
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "company_name": company[
+            "company_name"
+        ],
+        "admin_email": admin_email,
+        "seat_limit": seat_limit,
+        "is_unlimited_trial": False,
+        "stripe_subscription_id":
+            stripe_subscription_id
+    }
+
+
 class OfficeLoginRequest(BaseModel):
     email: str
     password: str
