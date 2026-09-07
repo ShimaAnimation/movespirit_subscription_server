@@ -832,7 +832,16 @@ def office_check_token(
         "is_admin": bool(
             user["is_admin"]
         ),
-        "seat_limit": seat_limit
+        "seat_limit": seat_limit,
+        "is_unlimited_trial": bool(
+            sync_result.get(
+                "trial",
+                False
+            )
+        ),
+        "trial_expires_at": sync_result.get(
+            "trial_expires_at"
+        )
     }
 
 
