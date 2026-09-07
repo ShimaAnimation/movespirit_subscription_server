@@ -437,12 +437,17 @@ def office_register_trial(
     }
 
 
-class OfficeConvertTrialToPaidRequest(BaseModel):
+class OfficeConvertTrialToPaidRequest(
+    BaseModel
+):
     admin_secret: str
     company_id: str
+    stripe_email: str
 
 
-@app.post("/office/convert-trial-to-paid")
+@app.post(
+    "/office/convert-trial-to-paid"
+)
 def office_convert_trial_to_paid(
     request: OfficeConvertTrialToPaidRequest
 ):
@@ -461,7 +466,20 @@ def office_convert_trial_to_paid(
             "reason": "unauthorized"
         }
 
-    company_id = request.company_id.strip()
+    # =========================================
+    # 入力整理
+    # =========================================
+
+    company_id = (
+        request.company_id
+        .strip()
+    )
+
+    stripe_email = (
+        request.stripe_email
+        .strip()
+        .lower()
+    )
 
     if not company_id:
         return {
@@ -469,11 +487,18 @@ def office_convert_trial_to_paid(
             "reason": "company_id_required"
         }
 
+    if not stripe_email:
+        return {
+            "success": False,
+            "reason": "stripe_email_required"
+        }
+
     # =========================================
-    # 会社情報取得
+    # 会社確認
     # =========================================
 
     with get_connection() as connection:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
@@ -482,7 +507,8 @@ def office_convert_trial_to_paid(
                     company_id,
                     company_name,
                     admin_email,
-                    is_unlimited_trial
+                    is_unlimited_trial,
+                    trial_expires_at
                 FROM office_companies
                 WHERE company_id = %s
                 """,
@@ -491,76 +517,67 @@ def office_convert_trial_to_paid(
                 )
             )
 
-            company = cursor.fetchone()
+            company = (
+                cursor.fetchone()
+            )
 
-    if not company:
-        return {
-            "success": False,
-            "reason": "company_not_found"
-        }
+            if not company:
 
-    # =========================================
-    # トライアル会社か確認
-    # =========================================
-
-    if not bool(
-        company["is_unlimited_trial"]
-    ):
-        return {
-            "success": False,
-            "reason": "not_trial_company"
-        }
-
-    admin_email = (
-        company["admin_email"]
-        .strip()
-        .lower()
-    )
+                return {
+                    "success": False,
+                    "reason": "company_not_found"
+                }
 
     # =========================================
-    # Stripe Office契約確認
+    # Stripe Office契約検索
     # =========================================
 
-    subscription_result = (
+    stripe_result = (
         find_office_subscription(
-            admin_email
+            stripe_email
         )
     )
 
-    if not subscription_result[
+    if not stripe_result.get(
         "success"
-    ]:
+    ):
+
         return {
             "success": False,
-            "reason": subscription_result.get(
+            "reason": stripe_result.get(
                 "reason",
                 "office_subscription_not_active"
             )
         }
 
     stripe_customer_id = (
-        subscription_result[
+        stripe_result[
             "customer_id"
         ]
     )
 
     stripe_subscription_id = (
-        subscription_result[
+        stripe_result[
             "subscription_id"
         ]
     )
 
-    seat_limit = int(
-        subscription_result[
-            "quantity"
-        ]
+    quantity = (
+        stripe_result.get(
+            "quantity",
+            1
+        )
     )
 
+    if not quantity:
+        quantity = 1
+
     # =========================================
-    # 有料Officeへ切り替え
+    # 無料法人 → 正式契約へ変更
     # =========================================
 
     with get_connection() as connection:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
@@ -570,14 +587,14 @@ def office_convert_trial_to_paid(
                     stripe_customer_id = %s,
                     stripe_subscription_id = %s,
                     seat_limit = %s,
-                    is_unlimited_trial = 0,
-                    trial_expires_at = NULL
+                    is_unlimited_trial = %s
                 WHERE company_id = %s
                 """,
                 (
                     stripe_customer_id,
                     stripe_subscription_id,
-                    seat_limit,
+                    quantity,
+                    0,
                     company_id
                 )
             )
@@ -585,23 +602,8 @@ def office_convert_trial_to_paid(
         connection.commit()
 
     # =========================================
-    # トライアル中に発行された共通ログイントークン削除
+    # 成功
     # =========================================
-
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                DELETE FROM office_login_tokens
-                WHERE company_id = %s
-                """,
-                (
-                    company_id,
-                )
-            )
-
-        connection.commit()
 
     return {
         "success": True,
@@ -609,11 +611,16 @@ def office_convert_trial_to_paid(
         "company_name": company[
             "company_name"
         ],
-        "admin_email": admin_email,
-        "seat_limit": seat_limit,
-        "is_unlimited_trial": False,
+        "admin_email": company[
+            "admin_email"
+        ],
+        "stripe_email": stripe_email,
+        "stripe_customer_id":
+            stripe_customer_id,
         "stripe_subscription_id":
-            stripe_subscription_id
+            stripe_subscription_id,
+        "seat_limit": quantity,
+        "trial": False
     }
 
 
