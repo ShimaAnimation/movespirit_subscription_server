@@ -128,6 +128,23 @@ def initialize_database():
                 )
                 """
             )
+
+            cursor.execute(
+                """
+                ALTER TABLE office_companies
+                ADD COLUMN IF NOT EXISTS is_unlimited_trial
+                INTEGER NOT NULL DEFAULT 0
+                """
+            )
+
+            cursor.execute(
+                """
+                ALTER TABLE office_companies
+                ADD COLUMN IF NOT EXISTS trial_expires_at
+                DOUBLE PRECISION
+                """
+            )
+
         connection.commit()
 
 
