@@ -747,7 +747,6 @@ def office_login(
             # -------------------------
             # Office利用権確認
             # -------------------------
-
             sync_result = sync_office_seat_limit(
                 company_id
             )
@@ -763,6 +762,43 @@ def office_login(
             ]
 
             # -------------------------
+            # 有効ユーザー数確認
+            # -------------------------
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM office_users
+                WHERE company_id = %s
+                AND is_active = 1
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            active_user_count = cursor.fetchone()[
+                "count"
+            ]
+
+            # -------------------------
+            # 契約席数超過
+            #
+            # 管理者はユーザー整理のため
+            # ログインを許可する
+            # -------------------------
+            if (
+                not bool(is_admin)
+                and active_user_count > seat_limit
+            ):
+                return {
+                    "success": False,
+                    "reason": "over_seat_limit",
+                    "seat_limit": seat_limit,
+                    "active_user_count":
+                        active_user_count
+                }
+
+            # -------------------------
             # 通常Officeのみ
             # 以前のtokenを削除
             # -------------------------
@@ -771,7 +807,6 @@ def office_login(
             # 複数PCから同じアカウントで
             # 同時ログイン可能にする
             # -------------------------
-
             if not is_unlimited_trial:
 
                 cursor.execute(
@@ -1037,6 +1072,48 @@ def office_check_token(
     seat_limit = sync_result[
         "seat_limit"
     ]
+
+    # -------------------------
+    # 有効ユーザー数確認
+    # -------------------------
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM office_users
+                WHERE company_id = %s
+                AND is_active = 1
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            active_user_count = (
+                cursor.fetchone()["count"]
+            )
+
+    # -------------------------
+    # 契約席数超過
+    #
+    # 管理者は利用可能
+    # 一般ユーザーのみ一時停止
+    # -------------------------
+
+    if (
+        not bool(user["is_admin"])
+        and active_user_count > seat_limit
+    ):
+        return {
+            "success": False,
+            "reason": "over_seat_limit",
+            "seat_limit": seat_limit,
+            "active_user_count":
+                active_user_count
+        }
 
     return {
         "success": True,
