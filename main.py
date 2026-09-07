@@ -1560,6 +1560,7 @@ class OfficeSetUserActiveRequest(BaseModel):
     email: str
     is_active: bool
 
+
 @app.post("/office/set-user-active")
 def office_set_user_active(
     request: OfficeSetUserActiveRequest
@@ -1822,6 +1823,11 @@ def office_set_user_active(
         "company_id": company_id,
         "is_active": request.is_active
     }
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 class RegisterRequest(BaseModel):
