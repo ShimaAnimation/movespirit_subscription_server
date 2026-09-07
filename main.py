@@ -1902,6 +1902,216 @@ def office_set_user_active(
     }
 
 
+class OfficeUsersRequest(BaseModel):
+    token: str
+
+
+@app.post("/office/users")
+def office_users(
+    request: OfficeUsersRequest
+):
+
+    token = request.token.strip()
+
+    if not token:
+        return {
+            "success": False,
+            "reason": "token_required"
+        }
+
+    # =========================================
+    # 管理者token確認
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    company_id,
+                    expires_at
+                FROM office_login_tokens
+                WHERE token = %s
+                """,
+                (
+                    token,
+                )
+            )
+
+            token_data = cursor.fetchone()
+
+            if not token_data:
+                return {
+                    "success": False,
+                    "reason": "invalid_token"
+                }
+
+            # -------------------------
+            # token期限確認
+            # -------------------------
+
+            if time.time() > token_data[
+                "expires_at"
+            ]:
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE token = %s
+                    """,
+                    (
+                        token,
+                    )
+                )
+
+                connection.commit()
+
+                return {
+                    "success": False,
+                    "reason": "token_expired"
+                }
+
+            admin_email = token_data[
+                "email"
+            ]
+
+            company_id = token_data[
+                "company_id"
+            ]
+
+            # =========================================
+            # 管理者確認
+            # =========================================
+
+            cursor.execute(
+                """
+                SELECT
+                    is_admin,
+                    is_active
+                FROM office_users
+                WHERE email = %s
+                AND company_id = %s
+                """,
+                (
+                    admin_email,
+                    company_id
+                )
+            )
+
+            admin_user = cursor.fetchone()
+
+            if not admin_user:
+                return {
+                    "success": False,
+                    "reason": "user_not_found"
+                }
+
+            if not bool(
+                admin_user["is_active"]
+            ):
+                return {
+                    "success": False,
+                    "reason": "user_inactive"
+                }
+
+            if not bool(
+                admin_user["is_admin"]
+            ):
+                return {
+                    "success": False,
+                    "reason": "admin_required"
+                }
+
+    # =========================================
+    # Stripeから最新seat_limit取得
+    # =========================================
+
+    sync_result = sync_office_seat_limit(
+        company_id
+    )
+
+    if not sync_result["success"]:
+        return {
+            "success": False,
+            "reason": sync_result["reason"]
+        }
+
+    seat_limit = sync_result[
+        "seat_limit"
+    ]
+
+    # =========================================
+    # ユーザー一覧取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    is_admin,
+                    is_active,
+                    created_at
+                FROM office_users
+                WHERE company_id = %s
+                ORDER BY
+                    is_admin DESC,
+                    created_at ASC
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            rows = cursor.fetchall()
+
+    users = []
+
+    active_user_count = 0
+
+    for row in rows:
+
+        user_is_active = bool(
+            row["is_active"]
+        )
+
+        if user_is_active:
+            active_user_count += 1
+
+        users.append(
+            {
+                "email": row["email"],
+                "is_admin": bool(
+                    row["is_admin"]
+                ),
+                "is_active":
+                    user_is_active
+            }
+        )
+
+    # =========================================
+    # 結果
+    # =========================================
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "seat_limit": seat_limit,
+        "active_user_count":
+            active_user_count,
+        "registered_user_count":
+            len(users),
+        "over_seat_limit":
+            active_user_count
+            > seat_limit,
+        "users": users
+    }
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
