@@ -493,7 +493,6 @@ def office_login(
                     "reason": "user_not_found"
                 }
 
-            user_id = user["id"]
             company_id = user["company_id"]
             user_email = user["email"]
             hashed_password = user["password_hash"]
@@ -525,7 +524,9 @@ def office_login(
                     admin_email,
                     seat_limit,
                     stripe_customer_id,
-                    stripe_subscription_id
+                    stripe_subscription_id,
+                    is_unlimited_trial,
+                    trial_expires_at
                 FROM office_companies
                 WHERE company_id = %s
                 """,
@@ -546,8 +547,14 @@ def office_login(
                 "company_name"
             ]
 
+            is_unlimited_trial = bool(
+                company[
+                    "is_unlimited_trial"
+                ]
+            )
+
             # -------------------------
-            # Stripe Office契約確認
+            # Office利用権確認
             # -------------------------
 
             sync_result = sync_office_seat_limit(
@@ -565,21 +572,29 @@ def office_login(
             ]
 
             # -------------------------
-            # 以前のOfficeトークン削除
+            # 通常Officeのみ
+            # 以前のtokenを削除
+            # -------------------------
+            #
+            # 無料トライアルの場合は
+            # 複数PCから同じアカウントで
+            # 同時ログイン可能にする
             # -------------------------
 
-            cursor.execute(
-                """
-                DELETE FROM office_login_tokens
-                WHERE email = %s
-                """,
-                (
-                    email,
+            if not is_unlimited_trial:
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE email = %s
+                    """,
+                    (
+                        email,
+                    )
                 )
-            )
 
             # -------------------------
-            # 新しいトークン生成
+            # 新しいtoken生成
             # -------------------------
 
             token = secrets.token_urlsafe(
@@ -590,7 +605,12 @@ def office_login(
 
             expires_at = (
                 created_at
-                + (30 * 24 * 60 * 60)
+                + (
+                    30
+                    * 24
+                    * 60
+                    * 60
+                )
             )
 
             cursor.execute(
@@ -602,7 +622,13 @@ def office_login(
                     created_at,
                     expires_at
                 )
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                )
                 """,
                 (
                     email,
@@ -622,7 +648,8 @@ def office_login(
         "company_id": company_id,
         "company_name": company_name,
         "is_admin": bool(is_admin),
-        "seat_limit": seat_limit
+        "seat_limit": seat_limit,
+        "is_unlimited_trial": is_unlimited_trial
     }
 
 
@@ -936,12 +963,9 @@ def office_add_user(
             # -------------------------
             # 会社情報取得
             # -------------------------
-
             cursor.execute(
                 """
-                SELECT
-                    company_name,
-                    seat_limit
+                SELECT id
                 FROM office_companies
                 WHERE company_id = %s
                 """,
@@ -958,7 +982,17 @@ def office_add_user(
                     "reason": "company_not_found"
                 }
 
-            seat_limit = company["seat_limit"]
+            sync_result = sync_office_seat_limit(
+                company_id
+            )
+
+            if not sync_result["success"]:
+                return {
+                    "success": False,
+                    "reason": sync_result["reason"]
+                }
+
+            seat_limit = sync_result["seat_limit"]
 
             # -------------------------
             # 既存ユーザー確認
@@ -1092,6 +1126,13 @@ def office_add_users(
             "reason": "emails_required"
         }
 
+    if len(request.emails) > 500:
+        return {
+            "success": False,
+            "reason": "too_many_users",
+            "max_users": 500
+        }
+
     with get_connection() as connection:
         with connection.cursor() as cursor:
 
@@ -1118,6 +1159,18 @@ def office_add_users(
                 }
 
             if time.time() > token_data["expires_at"]:
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE token = %s
+                    """,
+                    (
+                        token,
+                    )
+                )
+
+                connection.commit()
+
                 return {
                     "success": False,
                     "reason": "token_expired"
@@ -1191,6 +1244,12 @@ def office_add_users(
                 email = target_email.strip().lower()
 
                 if not email:
+                    skipped_users.append(
+                        {
+                            "email": email,
+                            "reason": "email_required"
+                        }
+                    )
                     continue
 
                 cursor.execute(
