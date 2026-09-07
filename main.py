@@ -656,7 +656,8 @@ def office_login(
                     company_id,
                     email,
                     password_hash,
-                    is_admin
+                    is_admin,
+                    is_active
                 FROM office_users
                 WHERE email = %s
                 """,
@@ -677,6 +678,16 @@ def office_login(
             user_email = user["email"]
             hashed_password = user["password_hash"]
             is_admin = user["is_admin"]
+
+            is_active = bool(
+                user["is_active"]
+            )
+
+            if not is_active:
+                return {
+                    "success": False,
+                    "reason": "user_inactive"
+                }
 
             # -------------------------
             # パスワード確認
@@ -920,7 +931,8 @@ def office_check_token(
                 """
                 SELECT
                     email,
-                    is_admin
+                    is_admin,
+                    is_active
                 FROM office_users
                 WHERE email = %s
                 AND company_id = %s
@@ -937,6 +949,29 @@ def office_check_token(
                 return {
                     "success": False,
                     "reason": "user_not_found"
+                }
+
+            is_active = bool(
+                user["is_active"]
+            )
+
+            if not is_active:
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE token = %s
+                    """,
+                    (
+                        token,
+                    )
+                )
+
+                connection.commit()
+
+                return {
+                    "success": False,
+                    "reason": "user_inactive"
                 }
 
             # -------------------------
@@ -1520,9 +1555,273 @@ def office_add_users(
     }
 
 
-class LoginRequest(BaseModel):
+class OfficeSetUserActiveRequest(BaseModel):
+    token: str
     email: str
-    password: str
+    is_active: bool
+
+@app.post("/office/set-user-active")
+def office_set_user_active(
+    request: OfficeSetUserActiveRequest
+):
+
+    token = request.token.strip()
+    target_email = (
+        request.email
+        .strip()
+        .lower()
+    )
+
+    if not token:
+        return {
+            "success": False,
+            "reason": "token_required"
+        }
+
+    if not target_email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # -------------------------
+            # 管理者token確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    company_id,
+                    expires_at
+                FROM office_login_tokens
+                WHERE token = %s
+                """,
+                (
+                    token,
+                )
+            )
+
+            token_data = cursor.fetchone()
+
+            if not token_data:
+                return {
+                    "success": False,
+                    "reason": "invalid_token"
+                }
+
+            if time.time() > token_data["expires_at"]:
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE token = %s
+                    """,
+                    (
+                        token,
+                    )
+                )
+
+                connection.commit()
+
+                return {
+                    "success": False,
+                    "reason": "token_expired"
+                }
+
+            company_id = token_data[
+                "company_id"
+            ]
+
+            admin_email = token_data[
+                "email"
+            ]
+
+            # -------------------------
+            # 管理者確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    is_admin,
+                    is_active
+                FROM office_users
+                WHERE email = %s
+                AND company_id = %s
+                """,
+                (
+                    admin_email,
+                    company_id
+                )
+            )
+
+            admin_user = cursor.fetchone()
+
+            if not admin_user:
+                return {
+                    "success": False,
+                    "reason": "user_not_found"
+                }
+
+            if not bool(
+                admin_user["is_active"]
+            ):
+                return {
+                    "success": False,
+                    "reason": "user_inactive"
+                }
+
+            if not bool(
+                admin_user["is_admin"]
+            ):
+                return {
+                    "success": False,
+                    "reason": "admin_required"
+                }
+
+            # -------------------------
+            # 対象ユーザー確認
+            # -------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    is_admin,
+                    is_active
+                FROM office_users
+                WHERE email = %s
+                AND company_id = %s
+                """,
+                (
+                    target_email,
+                    company_id
+                )
+            )
+
+            target_user = cursor.fetchone()
+
+            if not target_user:
+                return {
+                    "success": False,
+                    "reason": "target_user_not_found"
+                }
+
+            # 管理者自身は無効化させない
+            if (
+                bool(target_user["is_admin"])
+                and not request.is_active
+            ):
+                return {
+                    "success": False,
+                    "reason": "cannot_disable_admin"
+                }
+
+            # -------------------------
+            # 有効化する場合は席数確認
+            # -------------------------
+
+            if request.is_active:
+
+                sync_result = (
+                    sync_office_seat_limit(
+                        company_id
+                    )
+                )
+
+                if not sync_result["success"]:
+                    return {
+                        "success": False,
+                        "reason": sync_result[
+                            "reason"
+                        ]
+                    }
+
+                seat_limit = sync_result[
+                    "seat_limit"
+                ]
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM office_users
+                    WHERE company_id = %s
+                    AND is_active = 1
+                    """,
+                    (
+                        company_id,
+                    )
+                )
+
+                active_count = cursor.fetchone()[
+                    "count"
+                ]
+
+                if (
+                    not bool(
+                        target_user[
+                            "is_active"
+                        ]
+                    )
+                    and active_count
+                    >= seat_limit
+                ):
+                    return {
+                        "success": False,
+                        "reason": "seat_limit_reached",
+                        "seat_limit": seat_limit,
+                        "active_user_count":
+                            active_count
+                    }
+
+            # -------------------------
+            # 有効/無効切り替え
+            # -------------------------
+
+            cursor.execute(
+                """
+                UPDATE office_users
+                SET is_active = %s
+                WHERE email = %s
+                AND company_id = %s
+                """,
+                (
+                    1
+                    if request.is_active
+                    else 0,
+                    target_email,
+                    company_id
+                )
+            )
+
+            # 無効化した場合は
+            # 既存tokenも全削除
+            if not request.is_active:
+
+                cursor.execute(
+                    """
+                    DELETE FROM office_login_tokens
+                    WHERE email = %s
+                    AND company_id = %s
+                    """,
+                    (
+                        target_email,
+                        company_id
+                    )
+                )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "email": target_email,
+        "company_id": company_id,
+        "is_active": request.is_active
+    }
 
 
 class RegisterRequest(BaseModel):
