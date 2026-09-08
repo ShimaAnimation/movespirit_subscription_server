@@ -437,6 +437,150 @@ def office_register_trial(
     }
 
 
+class OfficeChangeTrialExpirationRequest(
+    BaseModel
+):
+    admin_secret: str
+    company_id: str
+    trial_days: int
+
+
+@app.post(
+    "/office/change-trial-expiration"
+)
+def office_change_trial_expiration(
+    request: OfficeChangeTrialExpirationRequest
+):
+
+    # =========================================
+    # 開発者確認
+    # =========================================
+
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret
+        != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    company_id = (
+        request.company_id
+        .strip()
+    )
+
+    trial_days = (
+        request.trial_days
+    )
+
+    if not company_id:
+        return {
+            "success": False,
+            "reason": "company_id_required"
+        }
+
+    if trial_days <= 0:
+        return {
+            "success": False,
+            "reason": "invalid_trial_days"
+        }
+
+    # =========================================
+    # 新しい有効期限
+    # =========================================
+
+    now = (
+        time.time()
+    )
+
+    trial_expires_at = (
+        now
+        + (
+            trial_days
+            * 24
+            * 60
+            * 60
+        )
+    )
+
+    # =========================================
+    # 会社確認 + 更新
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    company_name,
+                    admin_email,
+                    is_unlimited_trial
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = (
+                cursor.fetchone()
+            )
+
+            if not company:
+                return {
+                    "success": False,
+                    "reason": "company_not_found"
+                }
+
+            if not bool(
+                company[
+                    "is_unlimited_trial"
+                ]
+            ):
+                return {
+                    "success": False,
+                    "reason": "not_trial_company"
+                }
+
+            cursor.execute(
+                """
+                UPDATE office_companies
+                SET trial_expires_at = %s
+                WHERE company_id = %s
+                """,
+                (
+                    trial_expires_at,
+                    company_id
+                )
+            )
+
+        connection.commit()
+
+    # =========================================
+    # 成功
+    # =========================================
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "company_name": company[
+            "company_name"
+        ],
+        "admin_email": company[
+            "admin_email"
+        ],
+        "trial_days": trial_days,
+        "trial_expires_at":
+            trial_expires_at
+    }
+
+
 class OfficeConvertTrialToPaidRequest(
     BaseModel
 ):
