@@ -778,8 +778,19 @@ def office_login(
     request: OfficeLoginRequest
 ):
 
-    email = request.email.strip().lower()
-    password = request.password
+    email = (
+        request.email
+        .strip()
+        .lower()
+    )
+
+    password = (
+        request.password
+    )
+
+    # =========================================
+    # 入力確認
+    # =========================================
 
     if not email:
         return {
@@ -793,12 +804,13 @@ def office_login(
             "reason": "password_required"
         }
 
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
+    # =========================================
+    # Officeユーザー取得
+    # =========================================
 
-            # -------------------------
-            # Officeユーザー取得
-            # -------------------------
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
 
             cursor.execute(
                 """
@@ -817,7 +829,9 @@ def office_login(
                 )
             )
 
-            user = cursor.fetchone()
+            user = (
+                cursor.fetchone()
+            )
 
             if not user:
                 return {
@@ -825,14 +839,43 @@ def office_login(
                     "reason": "user_not_found"
                 }
 
-            company_id = user["company_id"]
-            user_email = user["email"]
-            hashed_password = user["password_hash"]
-            is_admin = user["is_admin"]
+            # =========================================
+            # ユーザー情報
+            # =========================================
+
+            company_id = (
+                user[
+                    "company_id"
+                ]
+            )
+
+            user_email = (
+                user[
+                    "email"
+                ]
+            )
+
+            hashed_password = (
+                user[
+                    "password_hash"
+                ]
+            )
+
+            is_admin = (
+                user[
+                    "is_admin"
+                ]
+            )
 
             is_active = bool(
-                user["is_active"]
+                user[
+                    "is_active"
+                ]
             )
+
+            # =========================================
+            # 有効ユーザー確認
+            # =========================================
 
             if not is_active:
                 return {
@@ -840,13 +883,15 @@ def office_login(
                     "reason": "user_inactive"
                 }
 
-            # -------------------------
+            # =========================================
             # パスワード確認
-            # -------------------------
+            # =========================================
 
-            password_ok = password_hash.verify(
-                password,
-                hashed_password
+            password_ok = (
+                password_hash.verify(
+                    password,
+                    hashed_password
+                )
             )
 
             if not password_ok:
@@ -855,9 +900,9 @@ def office_login(
                     "reason": "invalid_password"
                 }
 
-            # -------------------------
+            # =========================================
             # 会社情報確認
-            # -------------------------
+            # =========================================
 
             cursor.execute(
                 """
@@ -877,7 +922,9 @@ def office_login(
                 )
             )
 
-            company = cursor.fetchone()
+            company = (
+                cursor.fetchone()
+            )
 
             if not company:
                 return {
@@ -885,9 +932,11 @@ def office_login(
                     "reason": "company_not_found"
                 }
 
-            company_name = company[
-                "company_name"
-            ]
+            company_name = (
+                company[
+                    "company_name"
+                ]
+            )
 
             is_unlimited_trial = bool(
                 company[
@@ -895,29 +944,41 @@ def office_login(
                 ]
             )
 
-            # -------------------------
+            # =========================================
             # Office利用権確認
-            # -------------------------
-            sync_result = sync_office_seat_limit(
-                company_id
+            # =========================================
+
+            sync_result = (
+                sync_office_seat_limit(
+                    company_id
+                )
             )
 
-            if not sync_result["success"]:
+            if not sync_result.get(
+                "success"
+            ):
                 return {
                     "success": False,
-                    "reason": sync_result["reason"]
+                    "reason": sync_result.get(
+                        "reason",
+                        "subscription_not_active"
+                    )
                 }
 
-            seat_limit = sync_result[
-                "seat_limit"
-            ]
+            seat_limit = (
+                sync_result[
+                    "seat_limit"
+                ]
+            )
 
-            # -------------------------
+            # =========================================
             # 有効ユーザー数確認
-            # -------------------------
+            # =========================================
+
             cursor.execute(
                 """
-                SELECT COUNT(*) AS count
+                SELECT
+                    COUNT(*) AS count
                 FROM office_users
                 WHERE company_id = %s
                 AND is_active = 1
@@ -927,37 +988,47 @@ def office_login(
                 )
             )
 
-            active_user_count = cursor.fetchone()[
-                "count"
-            ]
+            active_user_result = (
+                cursor.fetchone()
+            )
 
-            # -------------------------
-            # 契約席数超過
+            active_user_count = (
+                active_user_result[
+                    "count"
+                ]
+            )
+
+            # =========================================
+            # 契約席数超過確認
             #
             # 管理者はユーザー整理のため
-            # ログインを許可する
-            # -------------------------
+            # ログインを許可
+            # =========================================
+
             if (
-                not bool(is_admin)
-                and active_user_count > seat_limit
+                not bool(
+                    is_admin
+                )
+                and active_user_count
+                > seat_limit
             ):
                 return {
                     "success": False,
                     "reason": "over_seat_limit",
-                    "seat_limit": seat_limit,
+                    "seat_limit":
+                        seat_limit,
                     "active_user_count":
                         active_user_count
                 }
 
-            # -------------------------
-            # 通常Officeのみ
+            # =========================================
+            # 通常Office
             # 以前のtokenを削除
-            # -------------------------
             #
-            # 無料トライアルの場合は
-            # 複数PCから同じアカウントで
-            # 同時ログイン可能にする
-            # -------------------------
+            # 無料トライアル中は
+            # 同一アカウントの複数PCログイン可
+            # =========================================
+
             if not is_unlimited_trial:
 
                 cursor.execute(
@@ -970,15 +1041,19 @@ def office_login(
                     )
                 )
 
-            # -------------------------
+            # =========================================
             # 新しいtoken生成
-            # -------------------------
+            # =========================================
 
-            token = secrets.token_urlsafe(
-                48
+            token = (
+                secrets.token_urlsafe(
+                    48
+                )
             )
 
-            created_at = time.time()
+            created_at = (
+                time.time()
+            )
 
             expires_at = (
                 created_at
@@ -989,6 +1064,28 @@ def office_login(
                     * 60
                 )
             )
+
+            # =========================================
+            # ★ 最新ログイン時間を保存
+            # =========================================
+
+            cursor.execute(
+                """
+                UPDATE office_users
+                SET last_login_at = %s
+                WHERE company_id = %s
+                AND email = %s
+                """,
+                (
+                    created_at,
+                    company_id,
+                    email
+                )
+            )
+
+            # =========================================
+            # ログイントークン保存
+            # =========================================
 
             cursor.execute(
                 """
@@ -1016,7 +1113,15 @@ def office_login(
                 )
             )
 
+        # =========================================
+        # DB反映
+        # =========================================
+
         connection.commit()
+
+    # =========================================
+    # ログイン成功
+    # =========================================
 
     return {
         "success": True,
@@ -1024,9 +1129,14 @@ def office_login(
         "email": user_email,
         "company_id": company_id,
         "company_name": company_name,
-        "is_admin": bool(is_admin),
+        "is_admin": bool(
+            is_admin
+        ),
         "seat_limit": seat_limit,
-        "is_unlimited_trial": is_unlimited_trial
+        "is_unlimited_trial":
+            is_unlimited_trial,
+        "last_login_at":
+            created_at
     }
 
 
@@ -2260,6 +2370,196 @@ def office_users(
             active_user_count
             > seat_limit,
         "users": users
+    }
+
+
+class OfficeAdminUsersRequest(
+    BaseModel
+):
+    admin_secret: str
+    admin_email: str
+
+
+@app.post(
+    "/office/admin/users"
+)
+def office_admin_users(
+    request: OfficeAdminUsersRequest
+):
+
+    # =========================================
+    # 開発者専用認証
+    # =========================================
+
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret
+        != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    admin_email = (
+        request.admin_email
+        .strip()
+        .lower()
+    )
+
+    if not admin_email:
+        return {
+            "success": False,
+            "reason": "admin_email_required"
+        }
+
+    # =========================================
+    # 管理者確認
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    email,
+                    is_admin
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    admin_email,
+                )
+            )
+
+            admin_user = (
+                cursor.fetchone()
+            )
+
+    if not admin_user:
+        return {
+            "success": False,
+            "reason": "admin_not_found"
+        }
+
+    if not bool(
+        admin_user[
+            "is_admin"
+        ]
+    ):
+        return {
+            "success": False,
+            "reason": "not_admin"
+        }
+
+    company_id = (
+        admin_user[
+            "company_id"
+        ]
+    )
+
+    # =========================================
+    # 会社情報
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_name
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = (
+                cursor.fetchone()
+            )
+
+    # =========================================
+    # ユーザー一覧取得
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    is_admin,
+                    is_active,
+                    created_at,
+                    last_login_at
+                FROM office_users
+                WHERE company_id = %s
+                ORDER BY
+                    is_admin DESC,
+                    email ASC
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            users = (
+                cursor.fetchall()
+            )
+
+    # =========================================
+    # レスポンス
+    # =========================================
+
+    user_list = []
+
+    for user in users:
+
+        user_list.append(
+            {
+                "email":
+                    user["email"],
+
+                "is_admin":
+                    bool(
+                        user["is_admin"]
+                    ),
+
+                "is_active":
+                    bool(
+                        user["is_active"]
+                    ),
+
+                "created_at":
+                    user["created_at"],
+
+                "last_login_at":
+                    user["last_login_at"]
+            }
+        )
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "company_name": (
+            company["company_name"]
+            if company
+            else ""
+        ),
+        "admin_email": admin_email,
+        "user_count": len(
+            user_list
+        ),
+        "users": user_list
     }
 
 

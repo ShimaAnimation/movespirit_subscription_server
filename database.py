@@ -17,8 +17,14 @@ def get_connection():
 
 
 def initialize_database():
+
     with get_connection() as connection:
+
         with connection.cursor() as cursor:
+
+            # =========================================
+            # 個人ユーザー
+            # =========================================
 
             cursor.execute(
                 """
@@ -29,6 +35,10 @@ def initialize_database():
                 )
                 """
             )
+
+            # =========================================
+            # メール認証コード
+            # =========================================
 
             cursor.execute(
                 """
@@ -42,6 +52,10 @@ def initialize_database():
                 )
                 """
             )
+
+            # =========================================
+            # パスワードリセットコード
+            # =========================================
 
             cursor.execute(
                 """
@@ -59,9 +73,14 @@ def initialize_database():
             cursor.execute(
                 """
                 ALTER TABLE verification_codes
-                ADD COLUMN IF NOT EXISTS sent_at DOUBLE PRECISION NOT NULL DEFAULT 0
+                ADD COLUMN IF NOT EXISTS sent_at
+                DOUBLE PRECISION NOT NULL DEFAULT 0
                 """
             )
+
+            # =========================================
+            # 個人ログイントークン
+            # =========================================
 
             cursor.execute(
                 """
@@ -73,12 +92,19 @@ def initialize_database():
                 )
                 """
             )
+
             cursor.execute(
                 """
                 ALTER TABLE login_tokens
-                ADD COLUMN IF NOT EXISTS expires_at DOUBLE PRECISION
+                ADD COLUMN IF NOT EXISTS expires_at
+                DOUBLE PRECISION
                 """
             )
+
+            # =========================================
+            # ログイン失敗回数
+            # =========================================
+
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS login_attempts (
@@ -89,6 +115,11 @@ def initialize_database():
                 )
                 """
             )
+
+            # =========================================
+            # Office会社
+            # =========================================
+
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS office_companies (
@@ -104,6 +135,10 @@ def initialize_database():
                 """
             )
 
+            # =========================================
+            # Officeユーザー
+            # =========================================
+
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS office_users (
@@ -116,6 +151,11 @@ def initialize_database():
                 )
                 """
             )
+
+            # =========================================
+            # Officeログイントークン
+            # =========================================
+
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS office_login_tokens (
@@ -129,6 +169,10 @@ def initialize_database():
                 """
             )
 
+            # =========================================
+            # Office 無制限トライアル
+            # =========================================
+
             cursor.execute(
                 """
                 ALTER TABLE office_companies
@@ -136,6 +180,10 @@ def initialize_database():
                 INTEGER NOT NULL DEFAULT 0
                 """
             )
+
+            # =========================================
+            # Office トライアル終了日時
+            # =========================================
 
             cursor.execute(
                 """
@@ -145,6 +193,10 @@ def initialize_database():
                 """
             )
 
+            # =========================================
+            # Office ユーザー有効 / 無効
+            # =========================================
+
             cursor.execute(
                 """
                 ALTER TABLE office_users
@@ -152,6 +204,19 @@ def initialize_database():
                 INTEGER NOT NULL DEFAULT 1
                 """
             )
+
+            # =========================================
+            # Office 最新ログイン日時
+            # =========================================
+
+            cursor.execute(
+                """
+                ALTER TABLE office_users
+                ADD COLUMN IF NOT EXISTS last_login_at
+                DOUBLE PRECISION
+                """
+            )
+
         connection.commit()
 
 
