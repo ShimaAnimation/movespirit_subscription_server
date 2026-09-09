@@ -1073,11 +1073,14 @@ def office_login(
             cursor.execute(
                 """
                 UPDATE office_users
-                SET last_login_at = %s
+                SET
+                    last_login_at = %s,
+                    last_seen_at = %s
                 WHERE company_id = %s
                 AND email = %s
                 """,
                 (
+                    created_at,
                     created_at,
                     company_id,
                     email
@@ -1141,15 +1144,23 @@ def office_login(
     }
 
 
-class OfficeTokenCheckRequest(BaseModel):
+class OfficeTokenCheckRequest(
+    BaseModel
+):
     token: str
 
-@app.post("/office/check-token")
+
+@app.post(
+    "/office/check-token"
+)
 def office_check_token(
     request: OfficeTokenCheckRequest
 ):
 
-    token = request.token.strip()
+    token = (
+        request.token
+        .strip()
+    )
 
     if not token:
         return {
@@ -1157,7 +1168,12 @@ def office_check_token(
             "reason": "token_required"
         }
 
+    # =========================================
+    # token / ユーザー / 会社確認
+    # =========================================
+
     with get_connection() as connection:
+
         with connection.cursor() as cursor:
 
             # -------------------------
@@ -1179,7 +1195,9 @@ def office_check_token(
                 )
             )
 
-            token_data = cursor.fetchone()
+            token_data = (
+                cursor.fetchone()
+            )
 
             if not token_data:
                 return {
@@ -1191,9 +1209,12 @@ def office_check_token(
             # token有効期限確認
             # -------------------------
 
-            if time.time() > token_data[
-                "expires_at"
-            ]:
+            if (
+                time.time()
+                > token_data[
+                    "expires_at"
+                ]
+            ):
 
                 cursor.execute(
                     """
@@ -1212,13 +1233,17 @@ def office_check_token(
                     "reason": "token_expired"
                 }
 
-            email = token_data[
-                "email"
-            ]
+            email = (
+                token_data[
+                    "email"
+                ]
+            )
 
-            company_id = token_data[
-                "company_id"
-            ]
+            company_id = (
+                token_data[
+                    "company_id"
+                ]
+            )
 
             # -------------------------
             # Officeユーザー確認
@@ -1240,7 +1265,9 @@ def office_check_token(
                 )
             )
 
-            user = cursor.fetchone()
+            user = (
+                cursor.fetchone()
+            )
 
             if not user:
                 return {
@@ -1249,7 +1276,15 @@ def office_check_token(
                 }
 
             is_active = bool(
-                user["is_active"]
+                user[
+                    "is_active"
+                ]
+            )
+
+            is_admin = bool(
+                user[
+                    "is_admin"
+                ]
             )
 
             if not is_active:
@@ -1287,7 +1322,9 @@ def office_check_token(
                 )
             )
 
-            company = cursor.fetchone()
+            company = (
+                cursor.fetchone()
+            )
 
             if not company:
                 return {
@@ -1295,23 +1332,29 @@ def office_check_token(
                     "reason": "company_not_found"
                 }
 
-            company_name = company[
-                "company_name"
-            ]
+            company_name = (
+                company[
+                    "company_name"
+                ]
+            )
 
-    # -------------------------
-    # Stripe Office契約確認
-    # seat_limit同期
-    # -------------------------
+    # =========================================
+    # Stripe / Trial 利用権確認
+    # =========================================
 
-    sync_result = sync_office_seat_limit(
-        company_id
+    sync_result = (
+        sync_office_seat_limit(
+            company_id
+        )
     )
 
-    if not sync_result["success"]:
+    if not sync_result.get(
+        "success"
+    ):
 
-        # 契約が無効ならtokenも削除
+        # 契約が無効ならtoken削除
         with get_connection() as connection:
+
             with connection.cursor() as cursor:
 
                 cursor.execute(
@@ -1328,23 +1371,30 @@ def office_check_token(
 
         return {
             "success": False,
-            "reason": sync_result["reason"]
+            "reason": sync_result.get(
+                "reason",
+                "subscription_not_active"
+            )
         }
 
-    seat_limit = sync_result[
-        "seat_limit"
-    ]
+    seat_limit = (
+        sync_result[
+            "seat_limit"
+        ]
+    )
 
-    # -------------------------
+    # =========================================
     # 有効ユーザー数確認
-    # -------------------------
+    # =========================================
 
     with get_connection() as connection:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
                 """
-                SELECT COUNT(*) AS count
+                SELECT
+                    COUNT(*) AS count
                 FROM office_users
                 WHERE company_id = %s
                 AND is_active = 1
@@ -1355,27 +1405,62 @@ def office_check_token(
             )
 
             active_user_count = (
-                cursor.fetchone()["count"]
+                cursor.fetchone()[
+                    "count"
+                ]
             )
 
-    # -------------------------
+    # =========================================
     # 契約席数超過
     #
-    # 管理者は利用可能
-    # 一般ユーザーのみ一時停止
-    # -------------------------
+    # 管理者はユーザー整理のため利用可能
+    # =========================================
 
     if (
-        not bool(user["is_admin"])
-        and active_user_count > seat_limit
+        not is_admin
+        and active_user_count
+        > seat_limit
     ):
         return {
             "success": False,
             "reason": "over_seat_limit",
-            "seat_limit": seat_limit,
+            "seat_limit":
+                seat_limit,
             "active_user_count":
                 active_user_count
         }
+
+    # =========================================
+    # ★ 最後にサーバーへ正常接続した時間
+    # =========================================
+
+    last_seen_at = (
+        time.time()
+    )
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                UPDATE office_users
+                SET last_seen_at = %s
+                WHERE company_id = %s
+                AND email = %s
+                """,
+                (
+                    last_seen_at,
+                    company_id,
+                    email
+                )
+            )
+
+        connection.commit()
+
+    # =========================================
+    # 成功
+    # =========================================
 
     return {
         "success": True,
@@ -1383,9 +1468,7 @@ def office_check_token(
         "email": email,
         "company_id": company_id,
         "company_name": company_name,
-        "is_admin": bool(
-            user["is_admin"]
-        ),
+        "is_admin": is_admin,
         "seat_limit": seat_limit,
         "is_unlimited_trial": bool(
             sync_result.get(
@@ -1393,9 +1476,12 @@ def office_check_token(
                 False
             )
         ),
-        "trial_expires_at": sync_result.get(
-            "trial_expires_at"
-        )
+        "trial_expires_at":
+            sync_result.get(
+                "trial_expires_at"
+            ),
+        "last_seen_at":
+            last_seen_at
     }
 
 

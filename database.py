@@ -217,6 +217,16 @@ def initialize_database():
                 """
             )
 
+            # =========================================
+            # Office 最後にサーバー接続した日時
+            # =========================================
+            cursor.execute(
+                """
+                ALTER TABLE office_users
+                ADD COLUMN IF NOT EXISTS last_seen_at
+                DOUBLE PRECISION
+                """
+            )
         connection.commit()
 
 
