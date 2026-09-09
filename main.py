@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from pwdlib import PasswordHash
+from datetime import datetime, timezone, timedelta
 
 from database import (
     initialize_database,
@@ -2517,12 +2518,78 @@ def office_admin_users(
             )
 
     # =========================================
+    # 日本時間
+    # =========================================
+
+    japan_timezone = (
+        timezone(
+            timedelta(
+                hours=9
+            )
+        )
+    )
+
+    # =========================================
     # レスポンス
     # =========================================
 
     user_list = []
 
     for user in users:
+
+        created_at = (
+            user[
+                "created_at"
+            ]
+        )
+
+        last_login_at = (
+            user[
+                "last_login_at"
+            ]
+        )
+
+        # -----------------------------------------
+        # 登録日時
+        # -----------------------------------------
+
+        if created_at is not None:
+
+            created_at_jst = (
+                datetime
+                .fromtimestamp(
+                    created_at,
+                    tz=japan_timezone
+                )
+                .strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            )
+
+        else:
+
+            created_at_jst = None
+
+        # -----------------------------------------
+        # 最新ログイン日時
+        # -----------------------------------------
+
+        if last_login_at is not None:
+
+            last_login_at_jst = (
+                datetime
+                .fromtimestamp(
+                    last_login_at,
+                    tz=japan_timezone
+                )
+                .strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            )
+
+        else:
+
+            last_login_at_jst = None
 
         user_list.append(
             {
@@ -2540,10 +2607,10 @@ def office_admin_users(
                     ),
 
                 "created_at":
-                    user["created_at"],
+                    created_at_jst,
 
                 "last_login_at":
-                    user["last_login_at"]
+                    last_login_at_jst
             }
         )
 
