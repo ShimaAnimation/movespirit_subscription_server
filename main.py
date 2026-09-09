@@ -2460,6 +2460,126 @@ def office_users(
     }
 
 
+class OfficeChangePasswordRequest(BaseModel):
+    email: str
+    current_password: str
+    new_password: str
+
+
+@app.post("/office/change-password")
+def office_change_password(
+    request: OfficeChangePasswordRequest
+):
+
+    email = request.email.strip().lower()
+    current_password = request.current_password
+    new_password = request.new_password
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if not current_password:
+        return {
+            "success": False,
+            "reason": "current_password_required"
+        }
+
+    if len(new_password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    if current_password == new_password:
+        return {
+            "success": False,
+            "reason": "same_password"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    password_hash,
+                    is_active
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+            user = cursor.fetchone()
+
+            if not user:
+                return {
+                    "success": False,
+                    "reason": "user_not_found"
+                }
+
+            if not bool(
+                user["is_active"]
+            ):
+                return {
+                    "success": False,
+                    "reason": "user_inactive"
+                }
+
+            password_ok = password_hash.verify(
+                current_password,
+                user["password_hash"]
+            )
+
+            if not password_ok:
+                return {
+                    "success": False,
+                    "reason": "invalid_password"
+                }
+
+            new_password_hash = (
+                password_hash.hash(
+                    new_password
+                )
+            )
+
+            cursor.execute(
+                """
+                UPDATE office_users
+                SET password_hash = %s
+                WHERE email = %s
+                """,
+                (
+                    new_password_hash,
+                    email
+                )
+            )
+
+            # パスワード変更後は
+            # 全PCのログイントークンを無効化
+            cursor.execute(
+                """
+                DELETE FROM office_login_tokens
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True
+    }
+
+
 class OfficeAdminUsersRequest(
     BaseModel
 ):
@@ -2715,126 +2835,6 @@ def office_admin_users(
             ),
         "users":
             user_list
-    }
-
-
-class OfficeChangePasswordRequest(BaseModel):
-    email: str
-    current_password: str
-    new_password: str
-
-
-@app.post("/office/change-password")
-def office_change_password(
-    request: OfficeChangePasswordRequest
-):
-
-    email = request.email.strip().lower()
-    current_password = request.current_password
-    new_password = request.new_password
-
-    if not email:
-        return {
-            "success": False,
-            "reason": "email_required"
-        }
-
-    if not current_password:
-        return {
-            "success": False,
-            "reason": "current_password_required"
-        }
-
-    if len(new_password) < 8:
-        return {
-            "success": False,
-            "reason": "password_too_short"
-        }
-
-    if current_password == new_password:
-        return {
-            "success": False,
-            "reason": "same_password"
-        }
-
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT
-                    company_id,
-                    password_hash,
-                    is_active
-                FROM office_users
-                WHERE email = %s
-                """,
-                (
-                    email,
-                )
-            )
-
-            user = cursor.fetchone()
-
-            if not user:
-                return {
-                    "success": False,
-                    "reason": "user_not_found"
-                }
-
-            if not bool(
-                user["is_active"]
-            ):
-                return {
-                    "success": False,
-                    "reason": "user_inactive"
-                }
-
-            password_ok = password_hash.verify(
-                current_password,
-                user["password_hash"]
-            )
-
-            if not password_ok:
-                return {
-                    "success": False,
-                    "reason": "invalid_password"
-                }
-
-            new_password_hash = (
-                password_hash.hash(
-                    new_password
-                )
-            )
-
-            cursor.execute(
-                """
-                UPDATE office_users
-                SET password_hash = %s
-                WHERE email = %s
-                """,
-                (
-                    new_password_hash,
-                    email
-                )
-            )
-
-            # パスワード変更後は
-            # 全PCのログイントークンを無効化
-            cursor.execute(
-                """
-                DELETE FROM office_login_tokens
-                WHERE email = %s
-                """,
-                (
-                    email,
-                )
-            )
-
-        connection.commit()
-
-    return {
-        "success": True
     }
 
 
