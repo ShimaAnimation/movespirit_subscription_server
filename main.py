@@ -2549,7 +2549,7 @@ def office_admin_users(
     )
 
     # =========================================
-    # 会社情報
+    # 会社情報取得
     # =========================================
 
     with get_connection() as connection:
@@ -2572,8 +2572,14 @@ def office_admin_users(
                 cursor.fetchone()
             )
 
+    if not company:
+        return {
+            "success": False,
+            "reason": "company_not_found"
+        }
+
     # =========================================
-    # ユーザー一覧取得
+    # Officeユーザー一覧取得
     # =========================================
 
     with get_connection() as connection:
@@ -2587,7 +2593,8 @@ def office_admin_users(
                     is_admin,
                     is_active,
                     created_at,
-                    last_login_at
+                    last_login_at,
+                    last_seen_at
                 FROM office_users
                 WHERE company_id = %s
                 ORDER BY
@@ -2616,103 +2623,98 @@ def office_admin_users(
     )
 
     # =========================================
-    # レスポンス
+    # Unix時間 → 日本時間
+    # =========================================
+
+    def timestamp_to_jst(
+        timestamp
+    ):
+
+        if timestamp is None:
+            return None
+
+        return (
+            datetime
+            .fromtimestamp(
+                timestamp,
+                tz=japan_timezone
+            )
+            .strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        )
+
+    # =========================================
+    # レスポンス用ユーザー一覧
     # =========================================
 
     user_list = []
 
     for user in users:
 
-        created_at = (
-            user[
-                "created_at"
-            ]
-        )
-
-        last_login_at = (
-            user[
-                "last_login_at"
-            ]
-        )
-
-        # -----------------------------------------
-        # 登録日時
-        # -----------------------------------------
-
-        if created_at is not None:
-
-            created_at_jst = (
-                datetime
-                .fromtimestamp(
-                    created_at,
-                    tz=japan_timezone
-                )
-                .strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
-            )
-
-        else:
-
-            created_at_jst = None
-
-        # -----------------------------------------
-        # 最新ログイン日時
-        # -----------------------------------------
-
-        if last_login_at is not None:
-
-            last_login_at_jst = (
-                datetime
-                .fromtimestamp(
-                    last_login_at,
-                    tz=japan_timezone
-                )
-                .strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
-            )
-
-        else:
-
-            last_login_at_jst = None
-
         user_list.append(
             {
                 "email":
-                    user["email"],
+                    user[
+                        "email"
+                    ],
 
                 "is_admin":
                     bool(
-                        user["is_admin"]
+                        user[
+                            "is_admin"
+                        ]
                     ),
 
                 "is_active":
                     bool(
-                        user["is_active"]
+                        user[
+                            "is_active"
+                        ]
                     ),
 
                 "created_at":
-                    created_at_jst,
+                    timestamp_to_jst(
+                        user[
+                            "created_at"
+                        ]
+                    ),
 
                 "last_login_at":
-                    last_login_at_jst
+                    timestamp_to_jst(
+                        user[
+                            "last_login_at"
+                        ]
+                    ),
+
+                "last_seen_at":
+                    timestamp_to_jst(
+                        user[
+                            "last_seen_at"
+                        ]
+                    )
             }
         )
+
+    # =========================================
+    # 成功
+    # =========================================
 
     return {
         "success": True,
         "company_id": company_id,
-        "company_name": (
-            company["company_name"]
-            if company
-            else ""
-        ),
-        "admin_email": admin_email,
-        "user_count": len(
+        "company_name":
+            company[
+                "company_name"
+            ],
+        "admin_email":
+            admin_email,
+        "user_count":
+            len(
+                user_list
+            ),
+        "users":
             user_list
-        ),
-        "users": user_list
     }
 
 
