@@ -92,6 +92,264 @@ def stripe_check():
     }
 
 
+class OfficeAdminUsersRequest(
+    BaseModel
+):
+    admin_secret: str
+    admin_email: str
+
+
+@app.post(
+    "/office/admin/users"
+)
+def office_admin_users(
+    request: OfficeAdminUsersRequest
+):
+
+    # =========================================
+    # 開発者専用認証
+    # =========================================
+
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret
+        != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    admin_email = (
+        request.admin_email
+        .strip()
+        .lower()
+    )
+
+    if not admin_email:
+        return {
+            "success": False,
+            "reason": "admin_email_required"
+        }
+
+    # =========================================
+    # 管理者確認
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    email,
+                    is_admin
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    admin_email,
+                )
+            )
+
+            admin_user = (
+                cursor.fetchone()
+            )
+
+    if not admin_user:
+        return {
+            "success": False,
+            "reason": "admin_not_found"
+        }
+
+    if not bool(
+        admin_user[
+            "is_admin"
+        ]
+    ):
+        return {
+            "success": False,
+            "reason": "not_admin"
+        }
+
+    company_id = (
+        admin_user[
+            "company_id"
+        ]
+    )
+
+    # =========================================
+    # 会社情報取得
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_name
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = (
+                cursor.fetchone()
+            )
+
+    if not company:
+        return {
+            "success": False,
+            "reason": "company_not_found"
+        }
+
+    # =========================================
+    # Officeユーザー一覧取得
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    email,
+                    is_admin,
+                    is_active,
+                    created_at,
+                    last_login_at,
+                    last_seen_at
+                FROM office_users
+                WHERE company_id = %s
+                ORDER BY
+                    is_admin DESC,
+                    email ASC
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            users = (
+                cursor.fetchall()
+            )
+
+    # =========================================
+    # 日本時間
+    # =========================================
+
+    japan_timezone = (
+        timezone(
+            timedelta(
+                hours=9
+            )
+        )
+    )
+
+    # =========================================
+    # Unix時間 → 日本時間
+    # =========================================
+
+    def timestamp_to_jst(
+        timestamp
+    ):
+
+        if timestamp is None:
+            return None
+
+        return (
+            datetime
+            .fromtimestamp(
+                timestamp,
+                tz=japan_timezone
+            )
+            .strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        )
+
+    # =========================================
+    # レスポンス用ユーザー一覧
+    # =========================================
+
+    user_list = []
+
+    for user in users:
+
+        user_list.append(
+            {
+                "email":
+                    user[
+                        "email"
+                    ],
+
+                "is_admin":
+                    bool(
+                        user[
+                            "is_admin"
+                        ]
+                    ),
+
+                "is_active":
+                    bool(
+                        user[
+                            "is_active"
+                        ]
+                    ),
+
+                "created_at":
+                    timestamp_to_jst(
+                        user[
+                            "created_at"
+                        ]
+                    ),
+
+                "last_login_at":
+                    timestamp_to_jst(
+                        user[
+                            "last_login_at"
+                        ]
+                    ),
+
+                "last_seen_at":
+                    timestamp_to_jst(
+                        user[
+                            "last_seen_at"
+                        ]
+                    )
+            }
+        )
+
+    # =========================================
+    # 成功
+    # =========================================
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "company_name":
+            company[
+                "company_name"
+            ],
+        "admin_email":
+            admin_email,
+        "user_count":
+            len(
+                user_list
+            ),
+        "users":
+            user_list
+    }
+
+
 class OfficeRegisterRequest(BaseModel):
     company_name: str
     email: str
@@ -2577,264 +2835,6 @@ def office_change_password(
 
     return {
         "success": True
-    }
-
-
-class OfficeAdminUsersRequest(
-    BaseModel
-):
-    admin_secret: str
-    admin_email: str
-
-
-@app.post(
-    "/office/admin/users"
-)
-def office_admin_users(
-    request: OfficeAdminUsersRequest
-):
-
-    # =========================================
-    # 開発者専用認証
-    # =========================================
-
-    if (
-        not OFFICE_ADMIN_SECRET
-        or request.admin_secret
-        != OFFICE_ADMIN_SECRET
-    ):
-        return {
-            "success": False,
-            "reason": "unauthorized"
-        }
-
-    admin_email = (
-        request.admin_email
-        .strip()
-        .lower()
-    )
-
-    if not admin_email:
-        return {
-            "success": False,
-            "reason": "admin_email_required"
-        }
-
-    # =========================================
-    # 管理者確認
-    # =========================================
-
-    with get_connection() as connection:
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT
-                    company_id,
-                    email,
-                    is_admin
-                FROM office_users
-                WHERE email = %s
-                """,
-                (
-                    admin_email,
-                )
-            )
-
-            admin_user = (
-                cursor.fetchone()
-            )
-
-    if not admin_user:
-        return {
-            "success": False,
-            "reason": "admin_not_found"
-        }
-
-    if not bool(
-        admin_user[
-            "is_admin"
-        ]
-    ):
-        return {
-            "success": False,
-            "reason": "not_admin"
-        }
-
-    company_id = (
-        admin_user[
-            "company_id"
-        ]
-    )
-
-    # =========================================
-    # 会社情報取得
-    # =========================================
-
-    with get_connection() as connection:
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT
-                    company_name
-                FROM office_companies
-                WHERE company_id = %s
-                """,
-                (
-                    company_id,
-                )
-            )
-
-            company = (
-                cursor.fetchone()
-            )
-
-    if not company:
-        return {
-            "success": False,
-            "reason": "company_not_found"
-        }
-
-    # =========================================
-    # Officeユーザー一覧取得
-    # =========================================
-
-    with get_connection() as connection:
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT
-                    email,
-                    is_admin,
-                    is_active,
-                    created_at,
-                    last_login_at,
-                    last_seen_at
-                FROM office_users
-                WHERE company_id = %s
-                ORDER BY
-                    is_admin DESC,
-                    email ASC
-                """,
-                (
-                    company_id,
-                )
-            )
-
-            users = (
-                cursor.fetchall()
-            )
-
-    # =========================================
-    # 日本時間
-    # =========================================
-
-    japan_timezone = (
-        timezone(
-            timedelta(
-                hours=9
-            )
-        )
-    )
-
-    # =========================================
-    # Unix時間 → 日本時間
-    # =========================================
-
-    def timestamp_to_jst(
-        timestamp
-    ):
-
-        if timestamp is None:
-            return None
-
-        return (
-            datetime
-            .fromtimestamp(
-                timestamp,
-                tz=japan_timezone
-            )
-            .strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-        )
-
-    # =========================================
-    # レスポンス用ユーザー一覧
-    # =========================================
-
-    user_list = []
-
-    for user in users:
-
-        user_list.append(
-            {
-                "email":
-                    user[
-                        "email"
-                    ],
-
-                "is_admin":
-                    bool(
-                        user[
-                            "is_admin"
-                        ]
-                    ),
-
-                "is_active":
-                    bool(
-                        user[
-                            "is_active"
-                        ]
-                    ),
-
-                "created_at":
-                    timestamp_to_jst(
-                        user[
-                            "created_at"
-                        ]
-                    ),
-
-                "last_login_at":
-                    timestamp_to_jst(
-                        user[
-                            "last_login_at"
-                        ]
-                    ),
-
-                "last_seen_at":
-                    timestamp_to_jst(
-                        user[
-                            "last_seen_at"
-                        ]
-                    )
-            }
-        )
-
-    # =========================================
-    # 成功
-    # =========================================
-
-    return {
-        "success": True,
-        "company_id": company_id,
-        "company_name":
-            company[
-                "company_name"
-            ],
-        "admin_email":
-            admin_email,
-        "user_count":
-            len(
-                user_list
-            ),
-        "users":
-            user_list
     }
 
 
