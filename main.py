@@ -350,6 +350,288 @@ def office_admin_users(
     }
 
 
+class OfficeAdminAllUsersRequest(
+    BaseModel
+):
+    admin_secret: str
+
+
+@app.post(
+    "/office/admin/all-users"
+)
+def office_admin_all_users(
+    request: OfficeAdminAllUsersRequest
+):
+
+    # =========================================
+    # 開発者専用認証
+    # =========================================
+
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret
+        != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    # =========================================
+    # 日本時間
+    # =========================================
+
+    japan_timezone = (
+        timezone(
+            timedelta(
+                hours=9
+            )
+        )
+    )
+
+    def timestamp_to_jst(
+        timestamp
+    ):
+
+        if timestamp is None:
+            return None
+
+        return (
+            datetime
+            .fromtimestamp(
+                timestamp,
+                tz=japan_timezone
+            )
+            .strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        )
+
+    # =========================================
+    # 全企業取得
+    # =========================================
+
+    with get_connection() as connection:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    company_name,
+                    admin_email,
+                    seat_limit,
+                    stripe_customer_id,
+                    stripe_subscription_id,
+                    created_at,
+                    is_unlimited_trial,
+                    trial_expires_at
+                FROM office_companies
+                ORDER BY
+                    company_name ASC
+                """
+            )
+
+            companies = (
+                cursor.fetchall()
+            )
+
+    # =========================================
+    # 企業ごとのユーザー取得
+    # =========================================
+
+    company_list = []
+
+    total_user_count = 0
+    total_active_user_count = 0
+
+    for company in companies:
+
+        company_id = (
+            company[
+                "company_id"
+            ]
+        )
+
+        with get_connection() as connection:
+
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    SELECT
+                        email,
+                        is_admin,
+                        is_active,
+                        created_at,
+                        last_login_at,
+                        last_seen_at
+                    FROM office_users
+                    WHERE company_id = %s
+                    ORDER BY
+                        is_admin DESC,
+                        email ASC
+                    """,
+                    (
+                        company_id,
+                    )
+                )
+
+                users = (
+                    cursor.fetchall()
+                )
+
+        user_list = []
+
+        active_user_count = 0
+
+        for user in users:
+
+            is_active = bool(
+                user[
+                    "is_active"
+                ]
+            )
+
+            if is_active:
+                active_user_count += 1
+
+            user_list.append(
+                {
+                    "email":
+                        user[
+                            "email"
+                        ],
+
+                    "is_admin":
+                        bool(
+                            user[
+                                "is_admin"
+                            ]
+                        ),
+
+                    "is_active":
+                        is_active,
+
+                    "created_at":
+                        timestamp_to_jst(
+                            user[
+                                "created_at"
+                            ]
+                        ),
+
+                    "last_login_at":
+                        timestamp_to_jst(
+                            user[
+                                "last_login_at"
+                            ]
+                        ),
+
+                    "last_seen_at":
+                        timestamp_to_jst(
+                            user[
+                                "last_seen_at"
+                            ]
+                        )
+                }
+            )
+
+        total_user_count += (
+            len(
+                user_list
+            )
+        )
+
+        total_active_user_count += (
+            active_user_count
+        )
+
+        company_list.append(
+            {
+                "company_id":
+                    company[
+                        "company_id"
+                    ],
+
+                "company_name":
+                    company[
+                        "company_name"
+                    ],
+
+                "admin_email":
+                    company[
+                        "admin_email"
+                    ],
+
+                "seat_limit":
+                    company[
+                        "seat_limit"
+                    ],
+
+                "active_user_count":
+                    active_user_count,
+
+                "registered_user_count":
+                    len(
+                        user_list
+                    ),
+
+                "is_unlimited_trial":
+                    bool(
+                        company[
+                            "is_unlimited_trial"
+                        ]
+                    ),
+
+                "trial_expires_at":
+                    timestamp_to_jst(
+                        company[
+                            "trial_expires_at"
+                        ]
+                    ),
+
+                "stripe_customer_id":
+                    company[
+                        "stripe_customer_id"
+                    ],
+
+                "stripe_subscription_id":
+                    company[
+                        "stripe_subscription_id"
+                    ],
+
+                "created_at":
+                    timestamp_to_jst(
+                        company[
+                            "created_at"
+                        ]
+                    ),
+
+                "users":
+                    user_list
+            }
+        )
+
+    # =========================================
+    # 成功
+    # =========================================
+
+    return {
+        "success": True,
+        "company_count":
+            len(
+                company_list
+            ),
+        "total_user_count":
+            total_user_count,
+        "total_active_user_count":
+            total_active_user_count,
+        "companies":
+            company_list
+    }
+
+
 class OfficeRegisterRequest(BaseModel):
     company_name: str
     email: str
