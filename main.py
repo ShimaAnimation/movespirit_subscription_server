@@ -4888,3 +4888,107 @@ def personal_activity_stats(request: PersonalActivityStatsRequest):
         "current_active_user_count": current_active_user_count,
         "daily": daily
     }
+
+
+class PersonalUserActivityRequest(BaseModel):
+    admin_secret: str
+    email: str
+    start_date: str
+    end_date: str
+
+@app.post("/admin/personal/user-activity")
+def personal_user_activity(request: PersonalUserActivityRequest):
+    if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    email = request.email.strip().lower()
+
+    try:
+        start_date = datetime.strptime(
+            request.start_date,
+            "%Y-%m-%d"
+        ).date()
+
+        end_date = datetime.strptime(
+            request.end_date,
+            "%Y-%m-%d"
+        ).date()
+
+    except ValueError:
+        return {
+            "success": False,
+            "reason": "invalid_date"
+        }
+
+    if start_date > end_date:
+        return {
+            "success": False,
+            "reason": "invalid_date_range"
+        }
+
+    if (end_date - start_date).days > 365:
+        return {
+            "success": False,
+            "reason": "date_range_too_large"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    activity_date,
+                    login_count,
+                    server_connection_count
+                FROM user_daily_activity
+                WHERE LOWER(email) = %s
+                AND activity_date BETWEEN %s AND %s
+                ORDER BY activity_date ASC
+                """,
+                (
+                    email,
+                    start_date,
+                    end_date
+                )
+            )
+
+            rows = cursor.fetchall()
+
+    activity_dict = {
+        row["activity_date"]: {
+            "login_count": row["login_count"],
+            "server_connection_count": row["server_connection_count"]
+        }
+        for row in rows
+    }
+
+    daily = []
+    current_date = start_date
+
+    while current_date <= end_date:
+        activity = activity_dict.get(
+            current_date,
+            {
+                "login_count": 0,
+                "server_connection_count": 0
+            }
+        )
+
+        daily.append({
+            "date": current_date.strftime("%Y-%m-%d"),
+            "login_count": activity["login_count"],
+            "server_connection_count": activity["server_connection_count"]
+        })
+
+        current_date += timedelta(days=1)
+
+    return {
+        "success": True,
+        "email": email,
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "daily": daily
+    }
