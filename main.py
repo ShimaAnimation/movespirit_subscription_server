@@ -439,7 +439,24 @@ def office_admin_all_users(request: OfficeAdminAllUsersRequest):
                         COALESCE(
                             a.login_count,
                             0
-                        ) AS today_login_count
+                        ) AS today_login_count,
+
+                        COALESCE(
+                            (
+                                SELECT COUNT(*)
+                                FROM office_user_daily_activity AS monthly_activity
+                                WHERE LOWER(monthly_activity.email) = LOWER(u.email)
+                                AND monthly_activity.login_count > 0
+                                AND DATE_TRUNC(
+                                    'month',
+                                    monthly_activity.activity_date
+                                ) = DATE_TRUNC(
+                                    'month',
+                                    %s::date
+                                )
+                            ),
+                            0
+                        ) AS this_month_login_days
 
                     FROM office_users AS u
 
@@ -454,6 +471,7 @@ def office_admin_all_users(request: OfficeAdminAllUsersRequest):
                         u.email ASC
                     """,
                     (
+                        today_jst,
                         today_jst,
                         company_id
                     )
@@ -478,6 +496,7 @@ def office_admin_all_users(request: OfficeAdminAllUsersRequest):
                 "last_login_at": timestamp_to_jst(user["last_login_at"]),
                 "last_seen_at": timestamp_to_jst(user["last_seen_at"]),
                 "today_login_count": user["today_login_count"],
+                "this_month_login_days": user["this_month_login_days"],
                 "today_server_connection_count": user["today_server_connection_count"]
             })
 
@@ -3095,14 +3114,33 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
                     u.created_at,
                     u.last_login_at,
                     u.last_seen_at,
+
                     COALESCE(
                         a.login_count,
                         0
                     ) AS today_login_count,
+
                     COALESCE(
                         a.server_connection_count,
                         0
-                    ) AS today_server_connection_count
+                    ) AS today_server_connection_count,
+
+                    COALESCE(
+                        (
+                            SELECT COUNT(*)
+                            FROM user_daily_activity AS monthly_activity
+                            WHERE LOWER(monthly_activity.email) = LOWER(u.email)
+                            AND monthly_activity.login_count > 0
+                            AND DATE_TRUNC(
+                                'month',
+                                monthly_activity.activity_date
+                            ) = DATE_TRUNC(
+                                'month',
+                                %s::date
+                            )
+                        ),
+                        0
+                    ) AS this_month_login_days
 
                 FROM users AS u
 
@@ -3116,6 +3154,7 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
                 """,
                 (
                     today_jst,
+                    today_jst
                 )
             )
 
@@ -3129,9 +3168,7 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
     active_user_count = 0
 
     for row in rows:
-        is_active = bool(
-            row["is_active"]
-        )
+        is_active = bool(row["is_active"])
 
         if is_active:
             active_user_count += 1
@@ -3139,18 +3176,11 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
         users.append({
             "email": row["email"],
             "is_active": is_active,
-            "created_at": timestamp_to_jst(
-                row["created_at"]
-            ),
-            "last_login_at": timestamp_to_jst(
-                row["last_login_at"]
-            ),
-            "last_seen_at": timestamp_to_jst(
-                row["last_seen_at"]
-            ),
-            "today_login_count": row[
-                "today_login_count"
-            ],
+            "created_at": timestamp_to_jst(row["created_at"]),
+            "last_login_at": timestamp_to_jst(row["last_login_at"]),
+            "last_seen_at": timestamp_to_jst(row["last_seen_at"]),
+            "today_login_count": row["today_login_count"],
+            "this_month_login_days": row["this_month_login_days"],
             "today_server_connection_count": row[
                 "today_server_connection_count"
             ]
