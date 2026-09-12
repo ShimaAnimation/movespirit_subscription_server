@@ -4582,3 +4582,56 @@ def check_token(
         "subscription_active": True,
         "email": email
     }
+
+class DeletePersonalUserRequest(BaseModel):
+    admin_secret: str
+    email: str
+
+
+@app.post("/admin/personal/delete-user")
+def delete_personal_user(request: DeletePersonalUserRequest):
+    if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    email = request.email.strip().lower()
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM login_tokens
+                WHERE email = %s
+                """,
+                (email,)
+            )
+
+            cursor.execute(
+                """
+                DELETE FROM user_daily_activity
+                WHERE email = %s
+                """,
+                (email,)
+            )
+
+            cursor.execute(
+                """
+                DELETE FROM users
+                WHERE email = %s
+                """,
+                (email,)
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "email": email
