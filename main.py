@@ -4666,3 +4666,225 @@ def delete_personal_user(request: DeletePersonalUserRequest):
         "success": True,
         "email": email
     }
+
+
+class PersonalActivityStatsRequest(BaseModel):
+    admin_secret: str
+    start_date: str
+    end_date: str
+
+@app.post("/admin/personal/activity-stats")
+def personal_activity_stats(request: PersonalActivityStatsRequest):
+
+    # =========================================
+    # 開発者専用認証
+    # =========================================
+
+    if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    # =========================================
+    # 日付確認
+    # =========================================
+
+    try:
+        start_date = datetime.strptime(
+            request.start_date,
+            "%Y-%m-%d"
+        ).date()
+
+        end_date = datetime.strptime(
+            request.end_date,
+            "%Y-%m-%d"
+        ).date()
+
+    except ValueError:
+        return {
+            "success": False,
+            "reason": "invalid_date"
+        }
+
+    if start_date > end_date:
+        return {
+            "success": False,
+            "reason": "invalid_date_range"
+        }
+
+    if (end_date - start_date).days > 365:
+        return {
+            "success": False,
+            "reason": "date_range_too_large"
+        }
+
+    # =========================================
+    # 今日の有効人数を保存
+    # =========================================
+
+    japan_timezone = timezone(timedelta(hours=9))
+    today_jst = datetime.now(japan_timezone).date()
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM users
+                WHERE is_active = 1
+                """
+            )
+
+            active_row = cursor.fetchone()
+
+            current_active_user_count = (
+                active_row["count"]
+                if active_row
+                else 0
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO personal_daily_stats (
+                    activity_date,
+                    active_user_count
+                )
+                VALUES (%s, %s)
+
+                ON CONFLICT (activity_date)
+                DO UPDATE SET
+                    active_user_count = EXCLUDED.active_user_count
+                """,
+                (
+                    today_jst,
+                    current_active_user_count
+                )
+            )
+
+        connection.commit()
+
+    # =========================================
+    # 日別ログイン人数取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    activity_date,
+                    COUNT(DISTINCT email) AS login_user_count
+
+                FROM user_daily_activity
+
+                WHERE activity_date BETWEEN %s AND %s
+                AND login_count > 0
+
+                GROUP BY activity_date
+
+                ORDER BY activity_date ASC
+                """,
+                (
+                    start_date,
+                    end_date
+                )
+            )
+
+            login_rows = cursor.fetchall()
+
+            cursor.execute(
+                """
+                SELECT
+                    activity_date,
+                    active_user_count
+
+                FROM personal_daily_stats
+
+                WHERE activity_date BETWEEN %s AND %s
+
+                ORDER BY activity_date ASC
+                """,
+                (
+                    start_date,
+                    end_date
+                )
+            )
+
+            active_rows = cursor.fetchall()
+
+            # =========================================
+            # 期間中に1度でもログインした重複なし人数
+            # =========================================
+
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT email) AS count
+
+                FROM user_daily_activity
+
+                WHERE activity_date BETWEEN %s AND %s
+                AND login_count > 0
+                """,
+                (
+                    start_date,
+                    end_date
+                )
+            )
+
+            total_login_row = cursor.fetchone()
+
+    total_login_user_count = (
+        total_login_row["count"]
+        if total_login_row
+        else 0
+    )
+
+    # =========================================
+    # 辞書化
+    # =========================================
+
+    login_dict = {
+        row["activity_date"]: row["login_user_count"]
+        for row in login_rows
+    }
+
+    active_dict = {
+        row["activity_date"]: row["active_user_count"]
+        for row in active_rows
+    }
+
+    # =========================================
+    # 全日付を作成
+    # =========================================
+
+    daily = []
+
+    current_date = start_date
+
+    while current_date <= end_date:
+
+        daily.append({
+            "date": current_date.strftime("%Y-%m-%d"),
+            "login_user_count": login_dict.get(
+                current_date,
+                0
+            ),
+            "active_user_count": active_dict.get(
+                current_date,
+                None
+            )
+        })
+
+        current_date += timedelta(days=1)
+
+    return {
+        "success": True,
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "total_login_user_count": total_login_user_count,
+        "current_active_user_count": current_active_user_count,
+        "daily": daily
+    }

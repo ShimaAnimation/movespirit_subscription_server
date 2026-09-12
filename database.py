@@ -320,6 +320,15 @@ def initialize_database():
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS personal_daily_stats (
+                    activity_date DATE PRIMARY KEY,
+                    active_user_count INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+
         connection.commit()
 
 
