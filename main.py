@@ -3048,6 +3048,122 @@ def office_change_password(
     }
 
 
+class PersonalAdminAllUsersRequest(BaseModel):
+    admin_secret: str
+
+
+@app.post("/admin/personal/all-users")
+def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
+
+    # =========================================
+    # 開発者専用認証
+    # =========================================
+
+    if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    # =========================================
+    # 日本時間
+    # =========================================
+
+    japan_timezone = timezone(timedelta(hours=9))
+    today_jst = datetime.now(japan_timezone).date()
+
+    def timestamp_to_jst(timestamp):
+        if timestamp is None:
+            return None
+
+        return datetime.fromtimestamp(
+            timestamp,
+            tz=japan_timezone
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # =========================================
+    # 個人ユーザー取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    u.email,
+                    u.is_active,
+                    u.created_at,
+                    u.last_login_at,
+                    u.last_seen_at,
+                    COALESCE(
+                        a.login_count,
+                        0
+                    ) AS today_login_count,
+                    COALESCE(
+                        a.server_connection_count,
+                        0
+                    ) AS today_server_connection_count
+
+                FROM users AS u
+
+                LEFT JOIN user_daily_activity AS a
+                    ON LOWER(a.email) = LOWER(u.email)
+                    AND a.activity_date = %s
+
+                ORDER BY
+                    u.created_at ASC NULLS LAST,
+                    u.email ASC
+                """,
+                (
+                    today_jst,
+                )
+            )
+
+            rows = cursor.fetchall()
+
+    # =========================================
+    # レスポンス作成
+    # =========================================
+
+    users = []
+    active_user_count = 0
+
+    for row in rows:
+        is_active = bool(
+            row["is_active"]
+        )
+
+        if is_active:
+            active_user_count += 1
+
+        users.append({
+            "email": row["email"],
+            "is_active": is_active,
+            "created_at": timestamp_to_jst(
+                row["created_at"]
+            ),
+            "last_login_at": timestamp_to_jst(
+                row["last_login_at"]
+            ),
+            "last_seen_at": timestamp_to_jst(
+                row["last_seen_at"]
+            ),
+            "today_login_count": row[
+                "today_login_count"
+            ],
+            "today_server_connection_count": row[
+                "today_server_connection_count"
+            ]
+        })
+
+    return {
+        "success": True,
+        "total_user_count": len(users),
+        "total_active_user_count": active_user_count,
+        "users": users
+    }
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
