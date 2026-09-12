@@ -17,9 +17,7 @@ def get_connection():
 
 
 def initialize_database():
-
     with get_connection() as connection:
-
         with connection.cursor() as cursor:
 
             # =========================================
@@ -220,6 +218,7 @@ def initialize_database():
             # =========================================
             # Office 最後にサーバー接続した日時
             # =========================================
+
             cursor.execute(
                 """
                 ALTER TABLE office_users
@@ -227,6 +226,23 @@ def initialize_database():
                 DOUBLE PRECISION
                 """
             )
+
+            # =========================================
+            # Office 日別サーバー接続回数
+            # =========================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS office_user_daily_activity (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    activity_date DATE NOT NULL,
+                    server_connection_count INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(email, activity_date)
+                )
+                """
+            )
+
         connection.commit()
 
 
