@@ -161,6 +161,17 @@ def initialize_database():
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS office_company_daily_stats (
+                    company_id TEXT NOT NULL,
+                    activity_date DATE NOT NULL,
+                    active_user_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (company_id, activity_date)
+                )
+                """
+            )
+
             # =========================================
             # 個人ユーザー
             # =========================================
