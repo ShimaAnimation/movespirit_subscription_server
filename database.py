@@ -243,6 +243,18 @@ def initialize_database():
                 """
             )
 
+            # =========================================
+            # Office 日別ログイン回数
+            # =========================================
+
+            cursor.execute(
+                """
+                ALTER TABLE office_user_daily_activity
+                ADD COLUMN IF NOT EXISTS login_count
+                INTEGER NOT NULL DEFAULT 0
+                """
+            )
+
         connection.commit()
 
 

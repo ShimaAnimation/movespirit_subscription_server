@@ -350,28 +350,18 @@ def office_admin_users(
     }
 
 
-class OfficeAdminAllUsersRequest(
-    BaseModel
-):
+class OfficeAdminAllUsersRequest(BaseModel):
     admin_secret: str
 
 
-@app.post(
-    "/office/admin/all-users"
-)
-def office_admin_all_users(
-    request: OfficeAdminAllUsersRequest
-):
+@app.post("/office/admin/all-users")
+def office_admin_all_users(request: OfficeAdminAllUsersRequest):
 
     # =========================================
     # 開発者専用認証
     # =========================================
 
-    if (
-        not OFFICE_ADMIN_SECRET
-        or request.admin_secret
-        != OFFICE_ADMIN_SECRET
-    ):
+    if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
         return {
             "success": False,
             "reason": "unauthorized"
@@ -381,40 +371,24 @@ def office_admin_all_users(
     # 日本時間
     # =========================================
 
-    japan_timezone = (
-        timezone(
-            timedelta(
-                hours=9
-            )
-        )
-    )
+    japan_timezone = timezone(timedelta(hours=9))
+    today_jst = datetime.now(japan_timezone).date()
 
-    def timestamp_to_jst(
-        timestamp
-    ):
-
+    def timestamp_to_jst(timestamp):
         if timestamp is None:
             return None
 
-        return (
-            datetime
-            .fromtimestamp(
-                timestamp,
-                tz=japan_timezone
-            )
-            .strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-        )
+        return datetime.fromtimestamp(
+            timestamp,
+            tz=japan_timezone
+        ).strftime("%Y-%m-%d %H:%M:%S")
 
     # =========================================
     # 全企業取得
     # =========================================
 
     with get_connection() as connection:
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
                 SELECT
@@ -428,190 +402,102 @@ def office_admin_all_users(
                     is_unlimited_trial,
                     trial_expires_at
                 FROM office_companies
-                ORDER BY
-                    company_name ASC
+                ORDER BY company_name ASC
                 """
             )
 
-            companies = (
-                cursor.fetchall()
-            )
+            companies = cursor.fetchall()
 
     # =========================================
     # 企業ごとのユーザー取得
     # =========================================
 
     company_list = []
-
     total_user_count = 0
     total_active_user_count = 0
 
     for company in companies:
-
-        company_id = (
-            company[
-                "company_id"
-            ]
-        )
+        company_id = company["company_id"]
 
         with get_connection() as connection:
-
             with connection.cursor() as cursor:
-
                 cursor.execute(
                     """
                     SELECT
-                        email,
-                        is_admin,
-                        is_active,
-                        created_at,
-                        last_login_at,
-                        last_seen_at
-                    FROM office_users
-                    WHERE company_id = %s
+                        u.email,
+                        u.is_admin,
+                        u.is_active,
+                        u.created_at,
+                        u.last_login_at,
+                        u.last_seen_at,
+
+                        COALESCE(
+                            a.server_connection_count,
+                            0
+                        ) AS today_server_connection_count,
+
+                        COALESCE(
+                            a.login_count,
+                            0
+                        ) AS today_login_count
+
+                    FROM office_users AS u
+
+                    LEFT JOIN office_user_daily_activity AS a
+                        ON LOWER(a.email) = LOWER(u.email)
+                        AND a.activity_date = %s
+
+                    WHERE u.company_id = %s
+
                     ORDER BY
-                        is_admin DESC,
-                        email ASC
+                        u.is_admin DESC,
+                        u.email ASC
                     """,
                     (
-                        company_id,
+                        today_jst,
+                        company_id
                     )
                 )
 
-                users = (
-                    cursor.fetchall()
-                )
+                users = cursor.fetchall()
 
         user_list = []
-
         active_user_count = 0
 
         for user in users:
-
-            is_active = bool(
-                user[
-                    "is_active"
-                ]
-            )
+            is_active = bool(user["is_active"])
 
             if is_active:
                 active_user_count += 1
 
-            user_list.append(
-                {
-                    "email":
-                        user[
-                            "email"
-                        ],
+            user_list.append({
+                "email": user["email"],
+                "is_admin": bool(user["is_admin"]),
+                "is_active": is_active,
+                "created_at": timestamp_to_jst(user["created_at"]),
+                "last_login_at": timestamp_to_jst(user["last_login_at"]),
+                "last_seen_at": timestamp_to_jst(user["last_seen_at"]),
+                "today_login_count": user["today_login_count"],
+                "today_server_connection_count": user["today_server_connection_count"]
+            })
 
-                    "is_admin":
-                        bool(
-                            user[
-                                "is_admin"
-                            ]
-                        ),
+        total_user_count += len(user_list)
+        total_active_user_count += active_user_count
 
-                    "is_active":
-                        is_active,
-
-                    "created_at":
-                        timestamp_to_jst(
-                            user[
-                                "created_at"
-                            ]
-                        ),
-
-                    "last_login_at":
-                        timestamp_to_jst(
-                            user[
-                                "last_login_at"
-                            ]
-                        ),
-
-                    "last_seen_at":
-                        timestamp_to_jst(
-                            user[
-                                "last_seen_at"
-                            ]
-                        )
-                }
-            )
-
-        total_user_count += (
-            len(
-                user_list
-            )
-        )
-
-        total_active_user_count += (
-            active_user_count
-        )
-
-        company_list.append(
-            {
-                "company_id":
-                    company[
-                        "company_id"
-                    ],
-
-                "company_name":
-                    company[
-                        "company_name"
-                    ],
-
-                "admin_email":
-                    company[
-                        "admin_email"
-                    ],
-
-                "seat_limit":
-                    company[
-                        "seat_limit"
-                    ],
-
-                "active_user_count":
-                    active_user_count,
-
-                "registered_user_count":
-                    len(
-                        user_list
-                    ),
-
-                "is_unlimited_trial":
-                    bool(
-                        company[
-                            "is_unlimited_trial"
-                        ]
-                    ),
-
-                "trial_expires_at":
-                    timestamp_to_jst(
-                        company[
-                            "trial_expires_at"
-                        ]
-                    ),
-
-                "stripe_customer_id":
-                    company[
-                        "stripe_customer_id"
-                    ],
-
-                "stripe_subscription_id":
-                    company[
-                        "stripe_subscription_id"
-                    ],
-
-                "created_at":
-                    timestamp_to_jst(
-                        company[
-                            "created_at"
-                        ]
-                    ),
-
-                "users":
-                    user_list
-            }
-        )
+        company_list.append({
+            "company_id": company["company_id"],
+            "company_name": company["company_name"],
+            "admin_email": company["admin_email"],
+            "seat_limit": company["seat_limit"],
+            "active_user_count": active_user_count,
+            "registered_user_count": len(user_list),
+            "is_unlimited_trial": bool(company["is_unlimited_trial"]),
+            "trial_expires_at": timestamp_to_jst(company["trial_expires_at"]),
+            "stripe_customer_id": company["stripe_customer_id"],
+            "stripe_subscription_id": company["stripe_subscription_id"],
+            "created_at": timestamp_to_jst(company["created_at"]),
+            "users": user_list
+        })
 
     # =========================================
     # 成功
@@ -619,16 +505,10 @@ def office_admin_all_users(
 
     return {
         "success": True,
-        "company_count":
-            len(
-                company_list
-            ),
-        "total_user_count":
-            total_user_count,
-        "total_active_user_count":
-            total_active_user_count,
-        "companies":
-            company_list
+        "company_count": len(company_list),
+        "total_user_count": total_user_count,
+        "total_active_user_count": total_active_user_count,
+        "companies": company_list
     }
 
 
@@ -1628,6 +1508,33 @@ def office_login(
             )
 
             # =========================================
+            # 本日のログイン回数 +1
+            # =========================================
+
+            japan_timezone = timezone(timedelta(hours=9))
+            today_jst = datetime.now(japan_timezone).date()
+
+            cursor.execute(
+                """
+                INSERT INTO office_user_daily_activity (
+                    email,
+                    activity_date,
+                    login_count
+                )
+                VALUES (%s, %s, 1)
+
+                ON CONFLICT (email, activity_date)
+                DO UPDATE SET
+                    login_count =
+                        office_user_daily_activity.login_count + 1
+                """,
+                (
+                    email.strip().lower(),
+                    today_jst
+                )
+            )
+
+            # =========================================
             # ログイントークン保存
             # =========================================
 
@@ -1973,15 +1880,15 @@ def office_check_token(
     # =========================================
     # ★ 最後にサーバーへ正常接続した時間
     # =========================================
+    last_seen_at = time.time()
 
-    last_seen_at = (
-        time.time()
-    )
+    japan_timezone = timezone(timedelta(hours=9))
+    today_jst = datetime.now(japan_timezone).date()
 
     with get_connection() as connection:
-
         with connection.cursor() as cursor:
 
+            # 最終サーバー接続日時
             cursor.execute(
                 """
                 UPDATE office_users
@@ -1993,6 +1900,27 @@ def office_check_token(
                     last_seen_at,
                     company_id,
                     email
+                )
+            )
+
+            # 本日のサーバー接続回数 +1
+            cursor.execute(
+                """
+                INSERT INTO office_user_daily_activity (
+                    email,
+                    activity_date,
+                    server_connection_count
+                )
+                VALUES (%s, %s, 1)
+
+                ON CONFLICT (email, activity_date)
+                DO UPDATE SET
+                    server_connection_count =
+                        office_user_daily_activity.server_connection_count + 1
+                """,
+                (
+                    email.strip().lower(),
+                    today_jst
                 )
             )
 
