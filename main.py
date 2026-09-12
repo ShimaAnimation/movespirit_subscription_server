@@ -3067,6 +3067,278 @@ def office_change_password(
     }
 
 
+class OfficeCompanyActivityRequest(BaseModel):
+    admin_secret: str
+    company_id: str
+    start_date: str
+    end_date: str
+
+@app.post("/office/admin/company-activity")
+def office_company_activity(request: OfficeCompanyActivityRequest):
+    if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    company_id = request.company_id.strip()
+
+    if not company_id:
+        return {
+            "success": False,
+            "reason": "company_id_required"
+        }
+
+    try:
+        start_date = datetime.strptime(
+            request.start_date,
+            "%Y-%m-%d"
+        ).date()
+
+        end_date = datetime.strptime(
+            request.end_date,
+            "%Y-%m-%d"
+        ).date()
+
+    except ValueError:
+        return {
+            "success": False,
+            "reason": "invalid_date"
+        }
+
+    if start_date > end_date:
+        return {
+            "success": False,
+            "reason": "invalid_date_range"
+        }
+
+    if (end_date - start_date).days > 365:
+        return {
+            "success": False,
+            "reason": "date_range_too_large"
+        }
+
+    japan_timezone = timezone(
+        timedelta(hours=9)
+    )
+
+    today_jst = datetime.now(
+        japan_timezone
+    ).date()
+
+    # =========================================
+    # 企業情報取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    company_name
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+    if not company:
+        return {
+            "success": False,
+            "reason": "company_not_found"
+        }
+
+    company_name = company["company_name"]
+
+    # =========================================
+    # 今日の有効人数を保存
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM office_users
+                WHERE company_id = %s
+                AND is_active = 1
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            active_row = cursor.fetchone()
+
+            current_active_user_count = (
+                active_row["count"]
+                if active_row
+                else 0
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO office_company_daily_stats (
+                    company_id,
+                    activity_date,
+                    active_user_count
+                )
+                VALUES (%s, %s, %s)
+
+                ON CONFLICT (
+                    company_id,
+                    activity_date
+                )
+                DO UPDATE SET
+                    active_user_count =
+                        EXCLUDED.active_user_count
+                """,
+                (
+                    company_id,
+                    today_jst,
+                    current_active_user_count
+                )
+            )
+
+        connection.commit()
+
+    # =========================================
+    # 企業所属ユーザーのメール取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT email
+                FROM office_users
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            user_rows = cursor.fetchall()
+
+    company_emails = [
+        row["email"].strip().lower()
+        for row in user_rows
+        if row["email"]
+    ]
+
+    # =========================================
+    # 日別ログイン人数取得
+    # =========================================
+
+    login_dict = {}
+
+    if company_emails:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        activity_date,
+                        COUNT(DISTINCT email) AS login_user_count
+                    FROM office_user_daily_activity
+                    WHERE LOWER(email) = ANY(%s)
+                    AND activity_date BETWEEN %s AND %s
+                    AND login_count > 0
+                    GROUP BY activity_date
+                    ORDER BY activity_date ASC
+                    """,
+                    (
+                        company_emails,
+                        start_date,
+                        end_date
+                    )
+                )
+
+                login_rows = cursor.fetchall()
+
+        login_dict = {
+            row["activity_date"]: row["login_user_count"]
+            for row in login_rows
+        }
+
+    # =========================================
+    # 日別有効人数取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    activity_date,
+                    active_user_count
+                FROM office_company_daily_stats
+                WHERE company_id = %s
+                AND activity_date BETWEEN %s AND %s
+                ORDER BY activity_date ASC
+                """,
+                (
+                    company_id,
+                    start_date,
+                    end_date
+                )
+            )
+
+            active_rows = cursor.fetchall()
+
+    active_dict = {
+        row["activity_date"]: row["active_user_count"]
+        for row in active_rows
+    }
+
+    # =========================================
+    # 全日付分作成
+    # =========================================
+
+    daily = []
+
+    current_date = start_date
+
+    while current_date <= end_date:
+        daily.append({
+            "date": current_date.strftime(
+                "%Y-%m-%d"
+            ),
+            "active_user_count": active_dict.get(
+                current_date,
+                None
+            ),
+            "login_user_count": login_dict.get(
+                current_date,
+                0
+            )
+        })
+
+        current_date += timedelta(
+            days=1
+        )
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "company_name": company_name,
+        "current_active_user_count": current_active_user_count,
+        "start_date": start_date.strftime(
+            "%Y-%m-%d"
+        ),
+        "end_date": end_date.strftime(
+            "%Y-%m-%d"
+        ),
+        "daily": daily
+    }
+
+
 class PersonalAdminAllUsersRequest(BaseModel):
     admin_secret: str
 
