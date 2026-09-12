@@ -3339,9 +3339,163 @@ def office_company_activity(request: OfficeCompanyActivityRequest):
     }
 
 
+class OfficeUserActivityRequest(BaseModel):
+    admin_secret: str
+    company_id: str
+    email: str
+    start_date: str
+    end_date: str
+
+
+@app.post("/office/admin/user-activity")
+def office_user_activity(request: OfficeUserActivityRequest):
+    if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    company_id = request.company_id.strip()
+    email = request.email.strip().lower()
+
+    if not company_id:
+        return {
+            "success": False,
+            "reason": "company_id_required"
+        }
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    try:
+        start_date = datetime.strptime(
+            request.start_date,
+            "%Y-%m-%d"
+        ).date()
+
+        end_date = datetime.strptime(
+            request.end_date,
+            "%Y-%m-%d"
+        ).date()
+
+    except ValueError:
+        return {
+            "success": False,
+            "reason": "invalid_date"
+        }
+
+    if start_date > end_date:
+        return {
+            "success": False,
+            "reason": "invalid_date_range"
+        }
+
+    if (end_date - start_date).days > 365:
+        return {
+            "success": False,
+            "reason": "date_range_too_large"
+        }
+
+    # =========================================
+    # 対象Officeユーザー確認
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT email
+                FROM office_users
+                WHERE company_id = %s
+                AND LOWER(email) = %s
+                """,
+                (
+                    company_id,
+                    email
+                )
+            )
+
+            user = cursor.fetchone()
+
+    if not user:
+        return {
+            "success": False,
+            "reason": "user_not_found"
+        }
+
+    # =========================================
+    # 日別履歴取得
+    # =========================================
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    activity_date,
+                    login_count,
+                    server_connection_count
+                FROM office_user_daily_activity
+                WHERE LOWER(email) = %s
+                AND activity_date BETWEEN %s AND %s
+                ORDER BY activity_date ASC
+                """,
+                (
+                    email,
+                    start_date,
+                    end_date
+                )
+            )
+
+            rows = cursor.fetchall()
+
+    activity_dict = {
+        row["activity_date"]: {
+            "login_count": row["login_count"],
+            "server_connection_count": row["server_connection_count"]
+        }
+        for row in rows
+    }
+
+    # =========================================
+    # 指定期間を全日付分作成
+    # =========================================
+
+    daily = []
+    current_date = start_date
+
+    while current_date <= end_date:
+        data = activity_dict.get(
+            current_date,
+            {
+                "login_count": 0,
+                "server_connection_count": 0
+            }
+        )
+
+        daily.append({
+            "date": current_date.strftime("%Y-%m-%d"),
+            "login_count": data["login_count"],
+            "server_connection_count": data["server_connection_count"]
+        })
+
+        current_date += timedelta(days=1)
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "email": email,
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "daily": daily
+    }
+
+
 class PersonalAdminAllUsersRequest(BaseModel):
     admin_secret: str
-
 
 @app.post("/admin/personal/all-users")
 def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
