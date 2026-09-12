@@ -4635,3 +4635,4 @@ def delete_personal_user(request: DeletePersonalUserRequest):
     return {
         "success": True,
         "email": email
+    }
