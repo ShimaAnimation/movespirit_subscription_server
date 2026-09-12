@@ -21,100 +21,6 @@ def initialize_database():
         with connection.cursor() as cursor:
 
             # =========================================
-            # 個人ユーザー
-            # =========================================
-
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    email TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL
-                )
-                """
-            )
-
-            # =========================================
-            # メール認証コード
-            # =========================================
-
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS verification_codes (
-                    id SERIAL PRIMARY KEY,
-                    email TEXT UNIQUE NOT NULL,
-                    code_hash TEXT NOT NULL,
-                    expires_at DOUBLE PRECISION NOT NULL,
-                    sent_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    verified INTEGER NOT NULL DEFAULT 0
-                )
-                """
-            )
-
-            # =========================================
-            # パスワードリセットコード
-            # =========================================
-
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS password_reset_codes (
-                    id SERIAL PRIMARY KEY,
-                    email TEXT UNIQUE NOT NULL,
-                    code_hash TEXT NOT NULL,
-                    expires_at DOUBLE PRECISION NOT NULL,
-                    sent_at DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    verified INTEGER NOT NULL DEFAULT 0
-                )
-                """
-            )
-
-            cursor.execute(
-                """
-                ALTER TABLE verification_codes
-                ADD COLUMN IF NOT EXISTS sent_at
-                DOUBLE PRECISION NOT NULL DEFAULT 0
-                """
-            )
-
-            # =========================================
-            # 個人ログイントークン
-            # =========================================
-
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS login_tokens (
-                    id SERIAL PRIMARY KEY,
-                    email TEXT NOT NULL,
-                    token TEXT UNIQUE NOT NULL,
-                    created_at DOUBLE PRECISION NOT NULL
-                )
-                """
-            )
-
-            cursor.execute(
-                """
-                ALTER TABLE login_tokens
-                ADD COLUMN IF NOT EXISTS expires_at
-                DOUBLE PRECISION
-                """
-            )
-
-            # =========================================
-            # ログイン失敗回数
-            # =========================================
-
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS login_attempts (
-                    id SERIAL PRIMARY KEY,
-                    email TEXT UNIQUE NOT NULL,
-                    failed_count INTEGER NOT NULL DEFAULT 0,
-                    locked_until DOUBLE PRECISION NOT NULL DEFAULT 0
-                )
-                """
-            )
-
-            # =========================================
             # Office会社
             # =========================================
 
@@ -252,6 +158,165 @@ def initialize_database():
                 ALTER TABLE office_user_daily_activity
                 ADD COLUMN IF NOT EXISTS login_count
                 INTEGER NOT NULL DEFAULT 0
+                """
+            )
+
+            # =========================================
+            # 個人ユーザー
+            # =========================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL
+                )
+                """
+            )
+
+            # =========================================
+            # メール認証コード
+            # =========================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS verification_codes (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    sent_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    verified INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+
+            # =========================================
+            # パスワードリセットコード
+            # =========================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS password_reset_codes (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    sent_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    verified INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                ALTER TABLE verification_codes
+                ADD COLUMN IF NOT EXISTS sent_at
+                DOUBLE PRECISION NOT NULL DEFAULT 0
+                """
+            )
+
+            # =========================================
+            # 個人ログイントークン
+            # =========================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS login_tokens (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    token TEXT UNIQUE NOT NULL,
+                    created_at DOUBLE PRECISION NOT NULL
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                ALTER TABLE login_tokens
+                ADD COLUMN IF NOT EXISTS expires_at
+                DOUBLE PRECISION
+                """
+            )
+
+            # =========================================
+            # ログイン失敗回数
+            # =========================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    failed_count INTEGER NOT NULL DEFAULT 0,
+                    locked_until DOUBLE PRECISION NOT NULL DEFAULT 0
+                )
+                """
+            )
+
+            # =========================================
+            # 個人ユーザー 登録日時
+            # =========================================
+
+            cursor.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS created_at
+                DOUBLE PRECISION
+                """
+            )
+
+            # =========================================
+            # 個人ユーザー 有効 / 無効
+            # =========================================
+
+            cursor.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS is_active
+                INTEGER NOT NULL DEFAULT 1
+                """
+            )
+
+            # =========================================
+            # 個人ユーザー 最新ログイン日時
+            # =========================================
+
+            cursor.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS last_login_at
+                DOUBLE PRECISION
+                """
+            )
+
+            # =========================================
+            # 個人ユーザー 最終サーバー接続日時
+            # =========================================
+
+            cursor.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS last_seen_at
+                DOUBLE PRECISION
+                """
+            )
+
+            # =========================================
+            # 個人ユーザー 日別利用状況
+            # =========================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_daily_activity (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    activity_date DATE NOT NULL,
+                    server_connection_count INTEGER NOT NULL DEFAULT 0,
+                    login_count INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(email, activity_date)
+                )
                 """
             )
 

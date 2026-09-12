@@ -3270,10 +3270,55 @@ def login(
     created_at = time.time()
     expires_at = created_at + (30 * 24 * 60 * 60)
 
+    # =========================================
+    # 個人ユーザー 最新ログイン日時
+    # 本日のログイン回数 +1
+    # =========================================
+
+    japan_timezone = timezone(timedelta(hours=9))
+    today_jst = datetime.now(japan_timezone).date()
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE users
+                SET
+                    last_login_at = %s,
+                    last_seen_at = %s
+                WHERE email = %s
+                """,
+                (
+                    created_at,
+                    created_at,
+                    email
+                )
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO user_daily_activity (
+                    email,
+                    activity_date,
+                    login_count
+                )
+                VALUES (%s, %s, 1)
+                ON CONFLICT (email, activity_date)
+                DO UPDATE SET
+                    login_count = user_daily_activity.login_count + 1
+                """,
+                (
+                    email,
+                    today_jst
+                )
+            )
+
+        connection.commit()
+
     save_login_token(
         email,
         token,
-        time.time()
+        created_at
     )
 
     return {
