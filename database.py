@@ -1,4 +1,5 @@
 import os
+import time
 
 import psycopg
 from psycopg.rows import dict_row
@@ -377,17 +378,21 @@ def create_user(
     with get_connection() as connection:
         with connection.cursor() as cursor:
 
+            created_at = time.time()
+
             cursor.execute(
                 """
                 INSERT INTO users (
                     email,
-                    password_hash
+                    password_hash,
+                    created_at
                 )
-                VALUES (%s, %s)
+                VALUES (%s, %s, %s)
                 """,
                 (
                     email.lower().strip(),
-                    password_hash
+                    password_hash,
+                    created_at
                 )
             )
 
