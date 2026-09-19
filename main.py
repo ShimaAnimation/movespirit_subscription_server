@@ -4055,14 +4055,20 @@ def login(
 
     # =========================================
     # 個人ユーザー 最新ログイン日時
-    # 本日のログイン回数 +1
+    # 本日のサーバー接続回数 +1
     # =========================================
 
-    japan_timezone = timezone(timedelta(hours=9))
-    today_jst = datetime.now(japan_timezone).date()
+    japan_timezone = timezone(
+        timedelta(hours=9)
+    )
+
+    today_jst = datetime.now(
+        japan_timezone
+    ).date()
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
+
             cursor.execute(
                 """
                 UPDATE users
@@ -4083,12 +4089,18 @@ def login(
                 INSERT INTO user_daily_activity (
                     email,
                     activity_date,
-                    login_count
+                    server_connection_count
                 )
                 VALUES (%s, %s, 1)
-                ON CONFLICT (email, activity_date)
+
+                ON CONFLICT (
+                    email,
+                    activity_date
+                )
+
                 DO UPDATE SET
-                    login_count = user_daily_activity.login_count + 1
+                    server_connection_count =
+                        user_daily_activity.server_connection_count + 1
                 """,
                 (
                     email,
@@ -5197,7 +5209,9 @@ def check_token(
             "reason": "invalid_token"
         }
 
-    TOKEN_EXPIRE_SECONDS = (30 * 24 * 60 * 60)
+    TOKEN_EXPIRE_SECONDS = (
+        30 * 24 * 60 * 60
+    )
 
     created_at = token_data[
         "created_at"
@@ -5244,16 +5258,74 @@ def check_token(
             "reason": "subscription_not_active"
         }
 
+    # =========================================
+    # サーバー接続記録
+    # =========================================
+
+    now = time.time()
+
+    japan_timezone = timezone(
+        timedelta(hours=9)
+    )
+
+    today_jst = datetime.now(
+        japan_timezone
+    ).date()
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # 最終サーバー接続日時
+            cursor.execute(
+                """
+                UPDATE users
+                SET
+                    last_seen_at = %s
+                WHERE email = %s
+                """,
+                (
+                    now,
+                    email
+                )
+            )
+
+            # 本日のサーバー接続回数 +1
+            cursor.execute(
+                """
+                INSERT INTO user_daily_activity (
+                    email,
+                    activity_date,
+                    server_connection_count
+                )
+                VALUES (%s, %s, 1)
+
+                ON CONFLICT (
+                    email,
+                    activity_date
+                )
+
+                DO UPDATE SET
+                    server_connection_count =
+                        user_daily_activity.server_connection_count + 1
+                """,
+                (
+                    email,
+                    today_jst
+                )
+            )
+
+        connection.commit()
+
     return {
         "success": True,
         "subscription_active": True,
         "email": email
     }
 
+
 class DeletePersonalUserRequest(BaseModel):
     admin_secret: str
     email: str
-
 
 @app.post("/admin/personal/delete-user")
 def delete_personal_user(request: DeletePersonalUserRequest):
