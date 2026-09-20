@@ -3958,6 +3958,10 @@ def login(
                 "retry_after": retry_after
             }
 
+    # -------------------------
+    # ユーザー取得
+    # -------------------------
+
     user = get_user_by_email(
         email
     )
@@ -3967,6 +3971,10 @@ def login(
             "success": False,
             "reason": "user_not_found"
         }
+
+    # -------------------------
+    # パスワード確認
+    # -------------------------
 
     password_ok = password_hash.verify(
         password,
@@ -4047,15 +4055,21 @@ def login(
     # -------------------------
     # 新token発行
     # -------------------------
+
     token = secrets.token_urlsafe(
         48
     )
+
     created_at = time.time()
-    expires_at = created_at + (30 * 24 * 60 * 60)
+
+    expires_at = (
+        created_at
+        + (30 * 24 * 60 * 60)
+    )
 
     # =========================================
     # 個人ユーザー 最新ログイン日時
-    # 本日のサーバー接続回数 +1
+    # 本日のログイン回数 +1
     # =========================================
 
     japan_timezone = timezone(
@@ -4069,29 +4083,39 @@ def login(
     with get_connection() as connection:
         with connection.cursor() as cursor:
 
+            # -------------------------
+            # 最終ログイン日時更新
+            # -------------------------
+
             cursor.execute(
                 """
                 UPDATE users
                 SET
-                    last_login_at = %s,
-                    last_seen_at = %s
+                    last_login_at = %s
                 WHERE email = %s
                 """,
                 (
                     created_at,
-                    created_at,
                     email
                 )
             )
+
+            # -------------------------
+            # 本日のログイン回数 +1
+            # -------------------------
 
             cursor.execute(
                 """
                 INSERT INTO user_daily_activity (
                     email,
                     activity_date,
-                    server_connection_count
+                    login_count
                 )
-                VALUES (%s, %s, 1)
+                VALUES (
+                    %s,
+                    %s,
+                    1
+                )
 
                 ON CONFLICT (
                     email,
@@ -4099,8 +4123,8 @@ def login(
                 )
 
                 DO UPDATE SET
-                    server_connection_count =
-                        user_daily_activity.server_connection_count + 1
+                    login_count =
+                        user_daily_activity.login_count + 1
                 """,
                 (
                     email,
@@ -4109,6 +4133,10 @@ def login(
             )
 
         connection.commit()
+
+    # -------------------------
+    # token保存
+    # -------------------------
 
     save_login_token(
         email,
@@ -4121,6 +4149,7 @@ def login(
         "subscription_active": True,
         "token": token
     }
+
 
 @app.post("/create-customer-portal")
 def create_customer_portal(
