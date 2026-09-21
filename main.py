@@ -2952,7 +2952,6 @@ class OfficeAdminResetPasswordRequest(BaseModel):
     email: str
     new_password: str
 
-
 @app.post("/office/admin/reset-password")
 def office_admin_reset_password(
     request: OfficeAdminResetPasswordRequest
