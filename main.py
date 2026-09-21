@@ -2947,6 +2947,112 @@ def office_users(
     }
 
 
+class OfficeAdminResetPasswordRequest(BaseModel):
+    admin_secret: str
+    email: str
+    new_password: str
+
+
+@app.post("/office/admin/reset-password")
+def office_admin_reset_password(
+    request: OfficeAdminResetPasswordRequest
+):
+
+    # =========================================
+    # 開発者専用認証
+    # =========================================
+
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    email = request.email.strip().lower()
+    new_password = request.new_password
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if len(new_password) < 8:
+        return {
+            "success": False,
+            "reason": "password_too_short"
+        }
+
+    # =========================================
+    # 新しいパスワードをハッシュ化
+    # =========================================
+
+    new_password_hash = password_hash.hash(
+        new_password
+    )
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+
+            # 対象ユーザー確認
+            cursor.execute(
+                """
+                SELECT
+                    email
+                FROM office_users
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+            user = cursor.fetchone()
+
+            if not user:
+                return {
+                    "success": False,
+                    "reason": "user_not_found"
+                }
+
+            # パスワード強制変更
+            cursor.execute(
+                """
+                UPDATE office_users
+                SET password_hash = %s
+                WHERE email = %s
+                """,
+                (
+                    new_password_hash,
+                    email
+                )
+            )
+
+            # =========================================
+            # 既存ログイントークンを全削除
+            # =========================================
+
+            cursor.execute(
+                """
+                DELETE FROM office_login_tokens
+                WHERE email = %s
+                """,
+                (
+                    email,
+                )
+            )
+
+        connection.commit()
+
+    return {
+        "success": True,
+        "email": email
+    }
+
+
 class OfficeChangePasswordRequest(BaseModel):
     email: str
     current_password: str
