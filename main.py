@@ -5892,6 +5892,10 @@ def personal_create_checkout(
             "reason": "personal_price_id_not_configured"
         }
 
+    # =========================================
+    # 日本時間
+    # =========================================
+
     japan_timezone = timezone(
         timedelta(
             hours=9
@@ -5902,15 +5906,29 @@ def personal_create_checkout(
         japan_timezone
     )
 
-    paid_start_date = datetime(
+    # =========================================
+    # 48時間無料キャンペーン
+    #
+    # 2026/09/22
+    # 2026/09/23
+    #
+    # この2日間に申し込んだ場合のみ
+    # 登録時刻から48時間無料
+    # =========================================
+
+    campaign_start_date = datetime(
+        2026,
+        9,
+        22,
+        tzinfo=japan_timezone
+    ).date()
+
+    campaign_end_date = datetime(
         2026,
         9,
         23,
-        0,
-        0,
-        0,
         tzinfo=japan_timezone
-    )
+    ).date()
 
     subscription_data = {
         "metadata": {
@@ -5919,26 +5937,27 @@ def personal_create_checkout(
         }
     }
 
-    if now.date() < paid_start_date.date():
+    if (
+        campaign_start_date
+        <= now.date()
+        <= campaign_end_date
+    ):
+        subscription_data[
+            "trial_period_days"
+        ] = 2
 
-        remaining_days = (
-            paid_start_date.date()
-            - now.date()
-        ).days
-
-        if remaining_days >= 1:
-            subscription_data[
-                "trial_period_days"
-            ] = remaining_days
-
-            subscription_data[
-                "trial_settings"
-            ] = {
-                "end_behavior": {
-                    "missing_payment_method":
-                        "cancel"
-                }
+        subscription_data[
+            "trial_settings"
+        ] = {
+            "end_behavior": {
+                "missing_payment_method":
+                    "cancel"
             }
+        }
+
+    # =========================================
+    # Stripe Checkout作成
+    # =========================================
 
     try:
         customers = stripe.Customer.list(
@@ -5960,10 +5979,13 @@ def personal_create_checkout(
                 {
                     "price":
                         PERSONAL_PRICE_ID,
-                    "quantity": 1
+                    "quantity":
+                        1
                 }
             ],
 
+            # 無料期間中でも
+            # 決済方法を事前登録
             "payment_method_collection":
                 "always",
 
@@ -5982,6 +6004,10 @@ def personal_create_checkout(
             }
         }
 
+        # =====================================
+        # 既存Stripe Customerがあれば再利用
+        # =====================================
+
         if customer_id:
             checkout_params[
                 "customer"
@@ -5992,6 +6018,10 @@ def personal_create_checkout(
                 "customer_email"
             ] = email
 
+        # =====================================
+        # Checkout Session作成
+        # =====================================
+
         session = (
             stripe.checkout.Session.create(
                 **checkout_params
@@ -6000,16 +6030,25 @@ def personal_create_checkout(
 
         return {
             "success": True,
-            "checkout_url": session.url,
+
+            "checkout_url":
+                session.url,
+
             "checkout_session_id":
                 session.id,
+
             "trial_days":
                 subscription_data.get(
                     "trial_period_days",
                     0
                 ),
-            "paid_start_date":
-                "2026-09-25"
+
+            "campaign_active":
+                (
+                    campaign_start_date
+                    <= now.date()
+                    <= campaign_end_date
+                )
         }
 
     except Exception as error:
