@@ -8,10 +8,11 @@ import stripe
 import resend
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from pwdlib import PasswordHash
 from datetime import datetime, timezone, timedelta
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from database import (
     initialize_database,
@@ -41,6 +42,19 @@ from database import (
 load_dotenv()
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "*"
+    ],
+    allow_credentials=False,
+    allow_methods=[
+        "*"
+    ],
+    allow_headers=[
+        "*"
+    ],
+)
 
 stripe.api_key = os.getenv(
     "STRIPE_SECRET_KEY"
@@ -5891,7 +5905,7 @@ def personal_create_checkout(
     paid_start_date = datetime(
         2026,
         9,
-        25,
+        23,
         0,
         0,
         0,
