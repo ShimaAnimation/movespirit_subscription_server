@@ -64,6 +64,17 @@ resend.api_key = os.getenv(
     "RESEND_API_KEY"
 )
 
+PERSONAL_PRICE_ID = os.getenv(
+    "STRIPE_PERSONAL_PRICE_ID"
+)
+
+PERSONAL_CHECKOUT_SUCCESS_URL = os.getenv(
+    "PERSONAL_CHECKOUT_SUCCESS_URL"
+)
+
+PERSONAL_CHECKOUT_CANCEL_URL = os.getenv(
+    "PERSONAL_CHECKOUT_CANCEL_URL"
+)
 
 CUSTOMER_PORTAL_RETURN_URL = os.getenv(
     "CUSTOMER_PORTAL_RETURN_URL",
@@ -5835,3 +5846,167 @@ def personal_user_activity(request: PersonalUserActivityRequest):
         "end_date": end_date.strftime("%Y-%m-%d"),
         "daily": daily
     }
+
+
+class PersonalCreateCheckoutRequest(
+    BaseModel
+):
+    email: str
+
+
+@app.post(
+    "/personal/create-checkout"
+)
+def personal_create_checkout(
+    request: PersonalCreateCheckoutRequest
+):
+    email = (
+        request.email
+        .strip()
+        .lower()
+    )
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if not PERSONAL_PRICE_ID:
+        return {
+            "success": False,
+            "reason": "personal_price_id_not_configured"
+        }
+
+    japan_timezone = timezone(
+        timedelta(
+            hours=9
+        )
+    )
+
+    now = datetime.now(
+        japan_timezone
+    )
+
+    paid_start_date = datetime(
+        2026,
+        9,
+        25,
+        0,
+        0,
+        0,
+        tzinfo=japan_timezone
+    )
+
+    subscription_data = {
+        "metadata": {
+            "plan": "personal",
+            "movespirit_email": email
+        }
+    }
+
+    if now.date() < paid_start_date.date():
+
+        remaining_days = (
+            paid_start_date.date()
+            - now.date()
+        ).days
+
+        if remaining_days >= 1:
+            subscription_data[
+                "trial_period_days"
+            ] = remaining_days
+
+            subscription_data[
+                "trial_settings"
+            ] = {
+                "end_behavior": {
+                    "missing_payment_method":
+                        "cancel"
+                }
+            }
+
+    try:
+        customers = stripe.Customer.list(
+            email=email,
+            limit=10
+        )
+
+        customer_id = None
+
+        if customers.data:
+            customer_id = (
+                customers.data[0].id
+            )
+
+        checkout_params = {
+            "mode": "subscription",
+
+            "line_items": [
+                {
+                    "price":
+                        PERSONAL_PRICE_ID,
+                    "quantity": 1
+                }
+            ],
+
+            "payment_method_collection":
+                "always",
+
+            "subscription_data":
+                subscription_data,
+
+            "success_url":
+                PERSONAL_CHECKOUT_SUCCESS_URL,
+
+            "cancel_url":
+                PERSONAL_CHECKOUT_CANCEL_URL,
+
+            "metadata": {
+                "plan": "personal",
+                "movespirit_email": email
+            }
+        }
+
+        if customer_id:
+            checkout_params[
+                "customer"
+            ] = customer_id
+
+        else:
+            checkout_params[
+                "customer_email"
+            ] = email
+
+        session = (
+            stripe.checkout.Session.create(
+                **checkout_params
+            )
+        )
+
+        return {
+            "success": True,
+            "checkout_url": session.url,
+            "checkout_session_id":
+                session.id,
+            "trial_days":
+                subscription_data.get(
+                    "trial_period_days",
+                    0
+                ),
+            "paid_start_date":
+                "2026-09-25"
+        }
+
+    except Exception as error:
+
+        print(
+            "personal_create_checkout error:",
+            error
+        )
+
+        return {
+            "success": False,
+            "reason": "stripe_error",
+            "detail": str(error)
+        }
