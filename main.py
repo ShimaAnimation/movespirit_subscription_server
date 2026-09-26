@@ -5893,67 +5893,39 @@ def personal_create_checkout(
         }
 
     # =========================================
-    # 日本時間
+    # 100時間無料トライアル
     # =========================================
 
-    japan_timezone = timezone(
-        timedelta(
-            hours=9
+    now_timestamp = int(
+        time.time()
+    )
+
+    trial_end_timestamp = (
+        now_timestamp
+        + (
+            100
+            * 60
+            * 60
         )
     )
-
-    now = datetime.now(
-        japan_timezone
-    )
-
-    # =========================================
-    # 48時間無料キャンペーン
-    #
-    # 2026/09/22
-    # 2026/09/23
-    #
-    # この2日間に申し込んだ場合のみ
-    # 登録時刻から48時間無料
-    # =========================================
-
-    campaign_start_date = datetime(
-        2026,
-        9,
-        22,
-        tzinfo=japan_timezone
-    ).date()
-
-    campaign_end_date = datetime(
-        2026,
-        9,
-        23,
-        tzinfo=japan_timezone
-    ).date()
 
     subscription_data = {
         "metadata": {
             "plan": "personal",
             "movespirit_email": email
-        }
-    }
+        },
 
-    if (
-        campaign_start_date
-        <= now.date()
-        <= campaign_end_date
-    ):
-        subscription_data[
-            "trial_period_days"
-        ] = 2
+        # 登録時点から100時間後
+        "trial_end":
+            trial_end_timestamp,
 
-        subscription_data[
-            "trial_settings"
-        ] = {
+        "trial_settings": {
             "end_behavior": {
                 "missing_payment_method":
                     "cancel"
             }
         }
+    }
 
     # =========================================
     # Stripe Checkout作成
@@ -6037,18 +6009,11 @@ def personal_create_checkout(
             "checkout_session_id":
                 session.id,
 
-            "trial_days":
-                subscription_data.get(
-                    "trial_period_days",
-                    0
-                ),
+            "trial_hours":
+                100,
 
-            "campaign_active":
-                (
-                    campaign_start_date
-                    <= now.date()
-                    <= campaign_end_date
-                )
+            "trial_end":
+                trial_end_timestamp
         }
 
     except Exception as error:
