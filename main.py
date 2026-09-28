@@ -6028,3 +6028,75 @@ def personal_create_checkout(
             "reason": "stripe_error",
             "detail": str(error)
         }
+
+
+class PersonalDownloadRequest(BaseModel):
+    email: str
+    language: str
+
+
+PERSONAL_DOWNLOAD_URLS = {
+    "jp": "https://download.movespirit.net/MoveSpirit_Japanese.zip",
+    "en": "https://download.movespirit.net/MoveSpirit_English.zip",
+    "kr": "https://download.movespirit.net/MoveSpirit_Korean.zip",
+    "zh-cn": "https://download.movespirit.net/MoveSpirit_Simplified_Chinese.zip",
+    "zh-tw": "https://download.movespirit.net/MoveSpirit_Traditional_Chinese.zip",
+}
+
+
+@app.post("/personal/check-download")
+def personal_check_download(
+    request: PersonalDownloadRequest
+):
+    email = (
+        request.email
+        .strip()
+        .lower()
+    )
+
+    language = (
+        request.language
+        .strip()
+        .lower()
+    )
+
+    if not email:
+        return {
+            "success": False,
+            "reason": "email_required"
+        }
+
+    if language not in PERSONAL_DOWNLOAD_URLS:
+        return {
+            "success": False,
+            "reason": "invalid_language"
+        }
+
+    try:
+        subscription_active = is_subscription_active(
+            email
+        )
+
+    except Exception as error:
+        print(
+            "personal check download error:",
+            error
+        )
+
+        return {
+            "success": False,
+            "reason": "stripe_check_failed"
+        }
+
+    if not subscription_active:
+        return {
+            "success": False,
+            "reason": "subscription_not_active"
+        }
+
+    return {
+        "success": True,
+        "download_url": PERSONAL_DOWNLOAD_URLS[
+            language
+        ]
+    }
