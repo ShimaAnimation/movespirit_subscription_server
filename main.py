@@ -254,8 +254,9 @@ def office_admin_users(
                     last_seen_at
                 FROM office_users
                 WHERE company_id = %s
-                AND is_admin = 0
-                ORDER BY email ASC
+                ORDER BY
+                    is_admin DESC,
+                    email ASC
                 """,
                 (
                     company_id,
@@ -489,9 +490,10 @@ def office_admin_all_users(request: OfficeAdminAllUsersRequest):
                         AND a.activity_date = %s
 
                     WHERE u.company_id = %s
-                    AND u.is_admin = 0
 
-                    ORDER BY u.email ASC
+                    ORDER BY
+                        u.is_admin DESC,
+                        u.email ASC
                     """,
                     (
                         today_jst,
@@ -1445,7 +1447,6 @@ def office_login(
                 FROM office_users
                 WHERE company_id = %s
                 AND is_active = 1
-                AND is_admin = 0
                 """,
                 (
                     company_id,
@@ -1557,26 +1558,25 @@ def office_login(
             japan_timezone = timezone(timedelta(hours=9))
             today_jst = datetime.now(japan_timezone).date()
 
-            if not bool(is_admin):
-                cursor.execute(
-                    """
-                    INSERT INTO office_user_daily_activity (
-                        email,
-                        activity_date,
-                        login_count
-                    )
-                    VALUES (%s, %s, 1)
-
-                    ON CONFLICT (email, activity_date)
-                    DO UPDATE SET
-                        login_count =
-                            office_user_daily_activity.login_count + 1
-                    """,
-                    (
-                        email.strip().lower(),
-                        today_jst
-                    )
+            cursor.execute(
+                """
+                INSERT INTO office_user_daily_activity (
+                    email,
+                    activity_date,
+                    login_count
                 )
+                VALUES (%s, %s, 1)
+
+                ON CONFLICT (email, activity_date)
+                DO UPDATE SET
+                    login_count =
+                        office_user_daily_activity.login_count + 1
+                """,
+                (
+                    email.strip().lower(),
+                    today_jst
+                )
+            )
 
             # =========================================
             # ログイントークン保存
@@ -1889,7 +1889,6 @@ def office_check_token(
                 FROM office_users
                 WHERE company_id = %s
                 AND is_active = 1
-                AND is_admin = 0
                 """,
                 (
                     company_id,
@@ -1948,27 +1947,26 @@ def office_check_token(
                 )
             )
 
-            # 管理者IDは利用統計に含めない
-            if not is_admin:
-                cursor.execute(
-                    """
-                    INSERT INTO office_user_daily_activity (
-                        email,
-                        activity_date,
-                        server_connection_count
-                    )
-                    VALUES (%s, %s, 1)
-
-                    ON CONFLICT (email, activity_date)
-                    DO UPDATE SET
-                        server_connection_count =
-                            office_user_daily_activity.server_connection_count + 1
-                    """,
-                    (
-                        email.strip().lower(),
-                        today_jst
-                    )
+            # 本日のサーバー接続回数 +1
+            cursor.execute(
+                """
+                INSERT INTO office_user_daily_activity (
+                    email,
+                    activity_date,
+                    server_connection_count
                 )
+                VALUES (%s, %s, 1)
+
+                ON CONFLICT (email, activity_date)
+                DO UPDATE SET
+                    server_connection_count =
+                        office_user_daily_activity.server_connection_count + 1
+                """,
+                (
+                    email.strip().lower(),
+                    today_jst
+                )
+            )
 
         connection.commit()
 
@@ -2187,7 +2185,6 @@ def office_add_user(
                 SELECT COUNT(*) AS user_count
                 FROM office_users
                 WHERE company_id = %s
-                AND is_admin = 0
                 """,
                 (
                     company_id,
@@ -2388,7 +2385,6 @@ def office_add_users(
                 SELECT COUNT(*) AS user_count
                 FROM office_users
                 WHERE company_id = %s
-                AND is_admin = 0
                 """,
                 (
                     company_id,
@@ -2693,7 +2689,6 @@ def office_set_user_active(
                     FROM office_users
                     WHERE company_id = %s
                     AND is_active = 1
-                    AND is_admin = 0
                     """,
                     (
                         company_id,
@@ -2923,8 +2918,9 @@ def office_users(
                     created_at
                 FROM office_users
                 WHERE company_id = %s
-                AND is_admin = 0
-                ORDER BY created_at ASC
+                ORDER BY
+                    is_admin DESC,
+                    created_at ASC
                 """,
                 (
                     company_id,
@@ -3301,7 +3297,6 @@ def office_company_activity(request: OfficeCompanyActivityRequest):
                 FROM office_users
                 WHERE company_id = %s
                 AND is_active = 1
-                AND is_admin = 0
                 """,
                 (
                     company_id,
@@ -3353,7 +3348,6 @@ def office_company_activity(request: OfficeCompanyActivityRequest):
                 SELECT email
                 FROM office_users
                 WHERE company_id = %s
-                AND is_admin = 0
                 """,
                 (
                     company_id,
@@ -3547,7 +3541,6 @@ def office_user_activity(request: OfficeUserActivityRequest):
                 FROM office_users
                 WHERE company_id = %s
                 AND LOWER(email) = %s
-                AND is_admin = 0
                 """,
                 (
                     company_id,
@@ -3684,7 +3677,6 @@ def office_activity_stats(request: OfficeActivityStatsRequest):
                 SELECT COUNT(*) AS count
                 FROM office_users
                 WHERE is_active = 1
-                AND is_admin = 0
                 """
             )
 
@@ -3724,21 +3716,17 @@ def office_activity_stats(request: OfficeActivityStatsRequest):
             cursor.execute(
                 """
                 SELECT
-                    activity.activity_date,
-                    COUNT(DISTINCT LOWER(activity.email))
+                    activity_date,
+                    COUNT(DISTINCT LOWER(email))
                         AS login_user_count
 
-                FROM office_user_daily_activity AS activity
+                FROM office_user_daily_activity
 
-                INNER JOIN office_users AS office_user
-                    ON LOWER(office_user.email) = LOWER(activity.email)
-                    AND office_user.is_admin = 0
+                WHERE activity_date BETWEEN %s AND %s
+                AND login_count > 0
 
-                WHERE activity.activity_date BETWEEN %s AND %s
-                AND activity.login_count > 0
-
-                GROUP BY activity.activity_date
-                ORDER BY activity.activity_date ASC
+                GROUP BY activity_date
+                ORDER BY activity_date ASC
                 """,
                 (
                     start_date,
@@ -3769,16 +3757,12 @@ def office_activity_stats(request: OfficeActivityStatsRequest):
 
             cursor.execute(
                 """
-                SELECT COUNT(DISTINCT LOWER(activity.email)) AS count
+                SELECT COUNT(DISTINCT LOWER(email)) AS count
 
-                FROM office_user_daily_activity AS activity
+                FROM office_user_daily_activity
 
-                INNER JOIN office_users AS office_user
-                    ON LOWER(office_user.email) = LOWER(activity.email)
-                    AND office_user.is_admin = 0
-
-                WHERE activity.activity_date BETWEEN %s AND %s
-                AND activity.login_count > 0
+                WHERE activity_date BETWEEN %s AND %s
+                AND login_count > 0
                 """,
                 (
                     start_date,
