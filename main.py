@@ -1305,9 +1305,6 @@ def office_create_payment_setup(
         session = stripe.checkout.Session.create(
             mode="setup",
             customer=stripe_customer_id,
-            payment_method_types=[
-                "card"
-            ],
             success_url=(
                 f"{PUBLIC_SERVER_URL}"
                 "/office/payment-setup-complete"
