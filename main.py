@@ -4874,7 +4874,10 @@ def find_office_subscription(
 
             if subscription.status not in (
                 "active",
-                "trialing"
+                "trialing",
+                "past_due",
+                "unpaid",
+                "incomplete"
             ):
                 continue
 
@@ -4909,6 +4912,7 @@ def find_office_subscription(
                     "success": True,
                     "customer_id": customer.id,
                     "subscription_id": subscription.id,
+                    "subscription_status": subscription.status,
                     "quantity": quantity
                 }
 
