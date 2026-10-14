@@ -2,15 +2,18 @@ import os
 import time
 import psycopg
 from psycopg.rows import dict_row
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL"
 )
+
 
 def get_connection():
     return psycopg.connect(
         DATABASE_URL,
         row_factory=dict_row
     )
+
 
 def initialize_database():
     with get_connection() as connection:
@@ -25,11 +28,21 @@ def initialize_database():
                     company_id TEXT UNIQUE NOT NULL,
                     company_name TEXT NOT NULL,
                     admin_email TEXT NOT NULL,
+                    stripe_email TEXT,
                     stripe_customer_id TEXT,
                     stripe_subscription_id TEXT,
                     seat_limit INTEGER NOT NULL DEFAULT 1,
                     created_at DOUBLE PRECISION NOT NULL
                 )
+                """
+            )
+            # =========================================
+            # Office Stripe登録メール
+            # =========================================
+            cursor.execute(
+                """
+                ALTER TABLE office_companies
+                ADD COLUMN IF NOT EXISTS stripe_email TEXT
                 """
             )
             # =========================================
@@ -301,12 +314,13 @@ def initialize_database():
             )
         connection.commit()
 
+
 def get_user_by_email(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT *
+                SELECT \*
                 FROM users
                 WHERE email = %s
                 """,
@@ -315,6 +329,7 @@ def get_user_by_email(email):
                 )
             )
             return cursor.fetchone()
+
 
 def create_user(
     email,
@@ -340,6 +355,7 @@ def create_user(
             )
         connection.commit()
 
+
 def set_email_verified(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -355,12 +371,13 @@ def set_email_verified(email):
             )
         connection.commit()
 
+
 def get_verification_code(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT *
+                SELECT \*
                 FROM verification_codes
                 WHERE email = %s
                 """,
@@ -369,6 +386,7 @@ def get_verification_code(email):
                 )
             )
             return cursor.fetchone()
+
 
 def delete_verification_code(email):
     with get_connection() as connection:
@@ -383,6 +401,7 @@ def delete_verification_code(email):
                 )
             )
         connection.commit()
+
 
 def save_verification_code(
     email,
@@ -418,6 +437,7 @@ def save_verification_code(
             )
         connection.commit()
 
+
 def delete_user(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -431,6 +451,7 @@ def delete_user(email):
                 )
             )
         connection.commit()
+
 
 def save_login_token(
     email,
@@ -456,12 +477,13 @@ def save_login_token(
             )
         connection.commit()
 
+
 def get_login_token(token):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT *
+                SELECT \*
                 FROM login_tokens
                 WHERE token = %s
                 """,
@@ -470,6 +492,7 @@ def get_login_token(token):
                 )
             )
             return cursor.fetchone()
+
 
 def delete_login_token(token):
     with get_connection() as connection:
@@ -485,6 +508,7 @@ def delete_login_token(token):
             )
         connection.commit()
 
+
 def delete_login_tokens_by_email(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -499,12 +523,13 @@ def delete_login_tokens_by_email(email):
             )
         connection.commit()
 
+
 def get_login_attempt(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT *
+                SELECT \*
                 FROM login_attempts
                 WHERE email = %s
                 """,
@@ -513,6 +538,7 @@ def get_login_attempt(email):
                 )
             )
             return cursor.fetchone()
+
 
 def register_login_failure(email):
     email = email.lower().strip()
@@ -535,6 +561,7 @@ def register_login_failure(email):
                 )
             )
         connection.commit()
+
 
 def lock_login(email, locked_until):
     with get_connection() as connection:
@@ -559,6 +586,7 @@ def lock_login(email, locked_until):
             )
         connection.commit()
 
+
 def reset_login_attempts(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -573,12 +601,13 @@ def reset_login_attempts(email):
             )
         connection.commit()
 
+
 def get_password_reset_code(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT *
+                SELECT \*
                 FROM password_reset_codes
                 WHERE email = %s
                 """,
@@ -587,6 +616,7 @@ def get_password_reset_code(email):
                 )
             )
             return cursor.fetchone()
+
 
 def save_password_reset_code(
     email,
@@ -622,6 +652,7 @@ def save_password_reset_code(
             )
         connection.commit()
 
+
 def set_password_reset_verified(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -637,6 +668,7 @@ def set_password_reset_verified(email):
             )
         connection.commit()
 
+
 def delete_password_reset_code(email):
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -650,6 +682,7 @@ def delete_password_reset_code(email):
                 )
             )
         connection.commit()
+
 
 def update_user_password(
     email,
@@ -669,10 +702,11 @@ def update_user_password(
                 )
             )
         connection.commit()
-# =====================================================
-# Office 一般ユーザー数
-# 管理者ID（is_admin = 1）は利用ユーザー数に含めない
-# =====================================================
+\# =====================================================
+\# Office 一般ユーザー数
+\# 管理者ID（is_admin = 1）は利用ユーザー数に含めない
+\# =====================================================
+
 
 def get_office_user_count(company_id, active_only=False):
     with get_connection() as connection:
@@ -680,7 +714,7 @@ def get_office_user_count(company_id, active_only=False):
             if active_only:
                 cursor.execute(
                     """
-                    SELECT COUNT(*) AS user_count
+                    SELECT COUNT(\*) AS user_count
                     FROM office_users
                     WHERE company_id = %s
                     AND is_admin = 0
@@ -691,7 +725,7 @@ def get_office_user_count(company_id, active_only=False):
             else:
                 cursor.execute(
                     """
-                    SELECT COUNT(*) AS user_count
+                    SELECT COUNT(\*) AS user_count
                     FROM office_users
                     WHERE company_id = %s
                     AND is_admin = 0
@@ -700,6 +734,7 @@ def get_office_user_count(company_id, active_only=False):
                 )
             result = cursor.fetchone()
             return int(result["user_count"]) if result else 0
+
 
 def get_office_active_user_count(company_id):
     return get_office_user_count(company_id, active_only=True)

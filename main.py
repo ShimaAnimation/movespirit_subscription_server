@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from pwdlib import PasswordHash
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import (
@@ -37,7 +37,6 @@ from database import (
     delete_password_reset_code,
     update_user_password
 )
-
 
 load_dotenv()
 
@@ -99,13 +98,11 @@ password_hash = PasswordHash.recommended()
 
 initialize_database()
 
-
 @app.get("/")
 def root():
     return {
         "status": "MoveSpirit subscription server is running"
     }
-
 
 @app.get("/stripe-check")
 def stripe_check():
@@ -116,13 +113,11 @@ def stripe_check():
         "account_id": account.id
     }
 
-
 class OfficeAdminUsersRequest(
     BaseModel
 ):
     admin_secret: str
     admin_email: str
-
 
 @app.post(
     "/office/admin/users"
@@ -373,10 +368,8 @@ def office_admin_users(
             user_list
     }
 
-
 class OfficeAdminAllUsersRequest(BaseModel):
     admin_secret: str
-
 
 @app.post("/office/admin/all-users")
 def office_admin_all_users(request: OfficeAdminAllUsersRequest):
@@ -419,6 +412,7 @@ def office_admin_all_users(request: OfficeAdminAllUsersRequest):
                     company_id,
                     company_name,
                     admin_email,
+                    stripe_email,
                     seat_limit,
                     stripe_customer_id,
                     stripe_subscription_id,
@@ -530,6 +524,7 @@ def office_admin_all_users(request: OfficeAdminAllUsersRequest):
             "company_id": company["company_id"],
             "company_name": company["company_name"],
             "admin_email": company["admin_email"],
+            "stripe_email": company["stripe_email"],
             "seat_limit": company["seat_limit"],
             "active_user_count": active_user_count,
             "registered_user_count": len(user_list),
@@ -553,12 +548,10 @@ def office_admin_all_users(request: OfficeAdminAllUsersRequest):
         "companies": company_list
     }
 
-
 class OfficeRegisterRequest(BaseModel):
     company_name: str
     email: str
     password: str
-
 
 @app.post("/office/register")
 def office_register(
@@ -715,13 +708,11 @@ def office_register(
         "seat_limit": seat_limit
     }
 
-
 class OfficeTrialRegisterRequest(BaseModel):
     admin_secret: str
     company_name: str
     email: str
     password: str
-
 
 @app.post("/office/register-trial")
 def office_register_trial(
@@ -899,14 +890,12 @@ def office_register_trial(
         "trial_expires_at": trial_expires_at
     }
 
-
 class OfficeChangeTrialExpirationRequest(
     BaseModel
 ):
     admin_secret: str
     company_id: str
     trial_days: int
-
 
 @app.post(
     "/office/change-trial-expiration"
@@ -1043,14 +1032,12 @@ def office_change_trial_expiration(
             trial_expires_at
     }
 
-
 class OfficeConvertTrialToPaidRequest(
     BaseModel
 ):
     admin_secret: str
     company_id: str
     stripe_email: str
-
 
 @app.post(
     "/office/convert-trial-to-paid"
@@ -1191,6 +1178,7 @@ def office_convert_trial_to_paid(
                 """
                 UPDATE office_companies
                 SET
+                    stripe_email = %s,
                     stripe_customer_id = %s,
                     stripe_subscription_id = %s,
                     seat_limit = %s,
@@ -1198,6 +1186,7 @@ def office_convert_trial_to_paid(
                 WHERE company_id = %s
                 """,
                 (
+                    stripe_email,
                     stripe_customer_id,
                     stripe_subscription_id,
                     quantity,
@@ -1230,11 +1219,9 @@ def office_convert_trial_to_paid(
         "trial": False
     }
 
-
 class OfficeLoginRequest(BaseModel):
     email: str
     password: str
-
 
 @app.post("/office/login")
 def office_login(
@@ -1634,12 +1621,10 @@ def office_login(
             created_at
     }
 
-
 class OfficeTokenCheckRequest(
     BaseModel
 ):
     token: str
-
 
 @app.post(
     "/office/check-token"
@@ -1998,7 +1983,6 @@ def office_check_token(
             last_seen_at
     }
 
-
 class OfficeAddUserRequest(BaseModel):
     token: str
     email: str
@@ -2258,7 +2242,6 @@ def office_add_user(
         )
     }
 
-
 class OfficeAddUsersRequest(BaseModel):
     token: str
     emails: list[str]
@@ -2495,12 +2478,10 @@ def office_add_users(
         "skipped_users": skipped_users
     }
 
-
 class OfficeSetUserActiveRequest(BaseModel):
     token: str
     email: str
     is_active: bool
-
 
 @app.post("/office/set-user-active")
 def office_set_user_active(
@@ -2766,10 +2747,8 @@ def office_set_user_active(
         "is_active": request.is_active
     }
 
-
 class OfficeUsersRequest(BaseModel):
     token: str
-
 
 @app.post("/office/users")
 def office_users(
@@ -2975,7 +2954,6 @@ def office_users(
         "users": users
     }
 
-
 class OfficeAdminResetPasswordRequest(BaseModel):
     admin_secret: str
     email: str
@@ -3080,12 +3058,10 @@ def office_admin_reset_password(
         "email": email
     }
 
-
 class OfficeChangePasswordRequest(BaseModel):
     email: str
     current_password: str
     new_password: str
-
 
 @app.post("/office/change-password")
 def office_change_password(
@@ -3199,7 +3175,6 @@ def office_change_password(
     return {
         "success": True
     }
-
 
 class OfficeCompanyActivityRequest(BaseModel):
     admin_secret: str
@@ -3474,14 +3449,12 @@ def office_company_activity(request: OfficeCompanyActivityRequest):
         "daily": daily
     }
 
-
 class OfficeUserActivityRequest(BaseModel):
     admin_secret: str
     company_id: str
     email: str
     start_date: str
     end_date: str
-
 
 @app.post("/office/admin/user-activity")
 def office_user_activity(request: OfficeUserActivityRequest):
@@ -3629,7 +3602,6 @@ def office_user_activity(request: OfficeUserActivityRequest):
         "end_date": end_date.strftime("%Y-%m-%d"),
         "daily": daily
     }
-
 
 class OfficeActivityStatsRequest(BaseModel):
     admin_secret: str
@@ -3850,7 +3822,6 @@ def office_activity_stats(request: OfficeActivityStatsRequest):
             daily
     }
 
-
 class PersonalAdminAllUsersRequest(BaseModel):
     admin_secret: str
 
@@ -3976,16 +3947,13 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
         "users": users
     }
 
-
 class LoginRequest(BaseModel):
     email: str
     password: str
 
-
 class RegisterRequest(BaseModel):
     email: str
     password: str
-
 
 @app.post("/register")
 def register(
@@ -4067,10 +4035,8 @@ def register(
         "success": True
     }
 
-
 class CustomerPortalRequest(BaseModel):
     token: str
-
 
 @app.post("/login")
 def login(
@@ -4296,7 +4262,6 @@ def login(
         "token": token
     }
 
-
 @app.post("/create-customer-portal")
 def create_customer_portal(
     request: CustomerPortalRequest
@@ -4475,7 +4440,6 @@ def send_verification_email(
 
     return result
 
-
 def is_subscription_active(email):
     email = email.strip().lower()
 
@@ -4525,7 +4489,6 @@ def is_subscription_active(email):
                 return True
 
     return False
-
 
 def find_office_subscription(
     email
@@ -4620,7 +4583,6 @@ def find_office_subscription(
         "success": False,
         "reason": "office_subscription_not_active"
     }
-
 
 def sync_office_seat_limit(company_id):
     with get_connection() as connection:
@@ -4791,11 +4753,9 @@ def sync_office_seat_limit(company_id):
         "trial": False
     }
 
-
 class VerifyCodeRequest(BaseModel):
     email: str
     code: str
-
 
 @app.post("/verify-code")
 def verify_code(
@@ -4842,7 +4802,6 @@ def verify_code(
         "success": True
     }
 
-
 stripe_key = os.getenv("STRIPE_SECRET_KEY")
 
 print(
@@ -4859,7 +4818,6 @@ print(
     "Stripe key length:",
     len(stripe_key) if stripe_key else 0
 )
-
 
 class SendVerificationCodeRequest(BaseModel):
     email: str
@@ -4992,10 +4950,8 @@ def send_verification_code(
             "detail": str(e)
         }
 
-
 class SendPasswordResetCodeRequest(BaseModel):
     email: str
-
 
 @app.post("/send-password-reset-code")
 def send_password_reset_code(
@@ -5141,11 +5097,9 @@ def send_password_reset_code(
             "detail": str(e)
         }
 
-
 class VerifyPasswordResetCodeRequest(BaseModel):
     email: str
     code: str
-
 
 @app.post("/verify-password-reset-code")
 def verify_password_reset_code(
@@ -5205,11 +5159,9 @@ def verify_password_reset_code(
         "success": True
     }
 
-
 class ResetPasswordRequest(BaseModel):
     email: str
     new_password: str
-
 
 @app.post("/reset-password")
 def reset_password(
@@ -5362,7 +5314,6 @@ def check_subscription(request: SubscriptionCheckRequest):
 class TokenCheckRequest(BaseModel):
     token: str
 
-
 @app.post("/check-token")
 def check_token(
     request: TokenCheckRequest
@@ -5497,7 +5448,6 @@ def check_token(
         "email": email
     }
 
-
 class DeletePersonalUserRequest(BaseModel):
     admin_secret: str
     email: str
@@ -5550,7 +5500,6 @@ def delete_personal_user(request: DeletePersonalUserRequest):
         "success": True,
         "email": email
     }
-
 
 class PersonalActivityStatsRequest(BaseModel):
     admin_secret: str
@@ -5773,7 +5722,6 @@ def personal_activity_stats(request: PersonalActivityStatsRequest):
         "daily": daily
     }
 
-
 class PersonalUserActivityRequest(BaseModel):
     admin_secret: str
     email: str
@@ -5877,12 +5825,10 @@ def personal_user_activity(request: PersonalUserActivityRequest):
         "daily": daily
     }
 
-
 class PersonalCreateCheckoutRequest(
     BaseModel
 ):
     email: str
-
 
 @app.post(
     "/personal/create-checkout"
@@ -6045,11 +5991,9 @@ def personal_create_checkout(
             "detail": str(error)
         }
 
-
 class PersonalDownloadRequest(BaseModel):
     email: str
     language: str
-
 
 PERSONAL_DOWNLOAD_URLS = {
     "jp": "https://download.movespirit.net/MoveSpirit_Japanese.zip",
@@ -6058,7 +6002,6 @@ PERSONAL_DOWNLOAD_URLS = {
     "zh-cn": "https://download.movespirit.net/MoveSpirit_Simplified_Chinese.zip",
     "zh-tw": "https://download.movespirit.net/MoveSpirit_Traditional_Chinese.zip",
 }
-
 
 @app.post("/personal/check-download")
 def personal_check_download(
