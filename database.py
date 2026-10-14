@@ -320,7 +320,7 @@ def get_user_by_email(email):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT \*
+                SELECT *
                 FROM users
                 WHERE email = %s
                 """,
@@ -377,7 +377,7 @@ def get_verification_code(email):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT \*
+                SELECT *
                 FROM verification_codes
                 WHERE email = %s
                 """,
@@ -483,7 +483,7 @@ def get_login_token(token):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT \*
+                SELECT *
                 FROM login_tokens
                 WHERE token = %s
                 """,
@@ -529,7 +529,7 @@ def get_login_attempt(email):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT \*
+                SELECT *
                 FROM login_attempts
                 WHERE email = %s
                 """,
@@ -607,7 +607,7 @@ def get_password_reset_code(email):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT \*
+                SELECT *
                 FROM password_reset_codes
                 WHERE email = %s
                 """,
@@ -702,10 +702,10 @@ def update_user_password(
                 )
             )
         connection.commit()
-\# =====================================================
-\# Office 一般ユーザー数
-\# 管理者ID（is_admin = 1）は利用ユーザー数に含めない
-\# =====================================================
+# =====================================================
+# Office 一般ユーザー数
+# 管理者ID（is_admin = 1）は利用ユーザー数に含めない
+# =====================================================
 
 
 def get_office_user_count(company_id, active_only=False):
@@ -714,7 +714,7 @@ def get_office_user_count(company_id, active_only=False):
             if active_only:
                 cursor.execute(
                     """
-                    SELECT COUNT(\*) AS user_count
+                    SELECT COUNT(*) AS user_count
                     FROM office_users
                     WHERE company_id = %s
                     AND is_admin = 0
@@ -725,7 +725,7 @@ def get_office_user_count(company_id, active_only=False):
             else:
                 cursor.execute(
                     """
-                    SELECT COUNT(\*) AS user_count
+                    SELECT COUNT(*) AS user_count
                     FROM office_users
                     WHERE company_id = %s
                     AND is_admin = 0
