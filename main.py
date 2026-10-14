@@ -1311,7 +1311,7 @@ def office_create_payment_setup(
             success_url=(
                 f"{PUBLIC_SERVER_URL}"
                 "/office/payment-setup-complete"
-                "?session_id={CHECKOUT_SESSION_ID}"
+                "?session_id={{CHECKOUT_SESSION_ID}}"
             ),
             cancel_url=(
                 f"{PUBLIC_SERVER_URL}"
@@ -4874,10 +4874,7 @@ def find_office_subscription(
 
             if subscription.status not in (
                 "active",
-                "trialing",
-                "past_due",
-                "unpaid",
-                "incomplete"
+                "trialing"
             ):
                 continue
 
@@ -4912,7 +4909,6 @@ def find_office_subscription(
                     "success": True,
                     "customer_id": customer.id,
                     "subscription_id": subscription.id,
-                    "subscription_status": subscription.status,
                     "quantity": quantity
                 }
 
