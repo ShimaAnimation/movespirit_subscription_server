@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from pwdlib import PasswordHash
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import (
@@ -66,6 +67,11 @@ OFFICE_PRICE_ID = os.getenv(
 OFFICE_ADMIN_SECRET = os.getenv(
     "OFFICE_ADMIN_SECRET"
 )
+
+PUBLIC_SERVER_URL = os.getenv(
+    "PUBLIC_SERVER_URL",
+    "https://movespiritsubscriptionserver-production.up.railway.app"
+).rstrip("/")
 
 UNLIMITED_TEST_COMPANY_ID = (
     "a912da44-58e6-4222-bb2e-ef42f68cfbec"
@@ -1218,6 +1224,333 @@ def office_convert_trial_to_paid(
         "seat_limit": quantity,
         "trial": False
     }
+
+class OfficeCreatePaymentSetupRequest(BaseModel):
+    admin_secret: str
+    company_id: str
+
+
+@app.post("/office/create-payment-setup")
+def office_create_payment_setup(
+    request: OfficeCreatePaymentSetupRequest
+):
+    if (
+        not OFFICE_ADMIN_SECRET
+        or request.admin_secret
+        != OFFICE_ADMIN_SECRET
+    ):
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
+
+    company_id = request.company_id.strip()
+
+    if not company_id:
+        return {
+            "success": False,
+            "reason": "company_id_required"
+        }
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    company_id,
+                    company_name,
+                    stripe_customer_id,
+                    stripe_subscription_id
+                FROM office_companies
+                WHERE company_id = %s
+                """,
+                (
+                    company_id,
+                )
+            )
+
+            company = cursor.fetchone()
+
+    if not company:
+        return {
+            "success": False,
+            "reason": "company_not_found"
+        }
+
+    stripe_customer_id = (
+        company[
+            "stripe_customer_id"
+        ]
+    )
+
+    stripe_subscription_id = (
+        company[
+            "stripe_subscription_id"
+        ]
+    )
+
+    if not stripe_customer_id:
+        return {
+            "success": False,
+            "reason": "stripe_customer_not_linked"
+        }
+
+    if not stripe_subscription_id:
+        return {
+            "success": False,
+            "reason": "stripe_subscription_not_linked"
+        }
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode="setup",
+            customer=stripe_customer_id,
+            payment_method_types=[
+                "card"
+            ],
+            success_url=(
+                f"{PUBLIC_SERVER_URL}"
+                "/office/payment-setup-complete"
+                "?session_id={CHECKOUT_SESSION_ID}"
+            ),
+            cancel_url=(
+                f"{PUBLIC_SERVER_URL}"
+                "/office/payment-setup-cancelled"
+            ),
+            metadata={
+                "company_id": company_id,
+                "stripe_subscription_id":
+                    stripe_subscription_id
+            }
+        )
+
+    except Exception as error:
+        print(
+            "office payment setup error:",
+            error
+        )
+
+        return {
+            "success": False,
+            "reason": "stripe_setup_session_failed"
+        }
+
+    return {
+        "success": True,
+        "company_id": company_id,
+        "company_name": company[
+            "company_name"
+        ],
+        "checkout_session_id": session.id,
+        "url": session.url
+    }
+
+
+@app.get(
+    "/office/payment-setup-complete",
+    response_class=HTMLResponse
+)
+def office_payment_setup_complete(
+    session_id: str
+):
+    try:
+        session = (
+            stripe.checkout.Session.retrieve(
+                session_id
+            )
+        )
+
+        if session.mode != "setup":
+            return HTMLResponse(
+                """
+                <h2>カード登録を確認できませんでした。</h2>
+                """,
+                status_code=400
+            )
+
+        if session.status != "complete":
+            return HTMLResponse(
+                """
+                <h2>カード登録が完了していません。</h2>
+                """,
+                status_code=400
+            )
+
+        setup_intent_id = session.setup_intent
+
+        if not setup_intent_id:
+            return HTMLResponse(
+                """
+                <h2>カード情報を確認できませんでした。</h2>
+                """,
+                status_code=400
+            )
+
+        setup_intent = (
+            stripe.SetupIntent.retrieve(
+                setup_intent_id
+            )
+        )
+
+        payment_method_id = (
+            setup_intent.payment_method
+        )
+
+        if not payment_method_id:
+            return HTMLResponse(
+                """
+                <h2>カード情報を取得できませんでした。</h2>
+                """,
+                status_code=400
+            )
+
+        company_id = (
+            session.metadata.get(
+                "company_id"
+            )
+        )
+
+        stripe_subscription_id = (
+            session.metadata.get(
+                "stripe_subscription_id"
+            )
+        )
+
+        stripe_customer_id = (
+            session.customer
+        )
+
+        if (
+            not company_id
+            or not stripe_customer_id
+            or not stripe_subscription_id
+        ):
+            return HTMLResponse(
+                """
+                <h2>契約情報を確認できませんでした。</h2>
+                """,
+                status_code=400
+            )
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        company_name,
+                        stripe_customer_id,
+                        stripe_subscription_id
+                    FROM office_companies
+                    WHERE company_id = %s
+                    """,
+                    (
+                        company_id,
+                    )
+                )
+
+                company = cursor.fetchone()
+
+        if not company:
+            return HTMLResponse(
+                """
+                <h2>会社情報を確認できませんでした。</h2>
+                """,
+                status_code=404
+            )
+
+        if (
+            company[
+                "stripe_customer_id"
+            ]
+            != stripe_customer_id
+            or company[
+                "stripe_subscription_id"
+            ]
+            != stripe_subscription_id
+        ):
+            return HTMLResponse(
+                """
+                <h2>Stripe契約情報が一致しません。</h2>
+                """,
+                status_code=400
+            )
+
+        stripe.Customer.modify(
+            stripe_customer_id,
+            invoice_settings={
+                "default_payment_method":
+                    payment_method_id
+            }
+        )
+
+        stripe.Subscription.modify(
+            stripe_subscription_id,
+            default_payment_method=
+                payment_method_id
+        )
+
+        return HTMLResponse(
+            f"""
+            <html>
+                <head>
+                    <meta charset="utf-8">
+                    <title>MoveSpirit</title>
+                </head>
+                <body style="
+                    background:#202020;
+                    color:white;
+                    font-family:sans-serif;
+                    text-align:center;
+                    padding-top:80px;
+                ">
+                    <h2>カード登録が完了しました。</h2>
+                    <p>{company["company_name"]}</p>
+                    <p>この画面は閉じて大丈夫です。</p>
+                </body>
+            </html>
+            """
+        )
+
+    except Exception as error:
+        print(
+            "office payment setup complete error:",
+            error
+        )
+
+        return HTMLResponse(
+            """
+            <h2>カード登録処理中にエラーが発生しました。</h2>
+            """,
+            status_code=500
+        )
+
+
+@app.get(
+    "/office/payment-setup-cancelled",
+    response_class=HTMLResponse
+)
+def office_payment_setup_cancelled():
+    return HTMLResponse(
+        """
+        <html>
+            <head>
+                <meta charset="utf-8">
+                <title>MoveSpirit</title>
+            </head>
+            <body style="
+                background:#202020;
+                color:white;
+                font-family:sans-serif;
+                text-align:center;
+                padding-top:80px;
+            ">
+                <h2>カード登録はキャンセルされました。</h2>
+                <p>この画面は閉じて大丈夫です。</p>
+            </body>
+        </html>
+        """
+    )
+
 
 class OfficeLoginRequest(BaseModel):
     email: str
