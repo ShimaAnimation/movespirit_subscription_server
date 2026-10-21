@@ -4251,30 +4251,52 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
 
     users = []
     active_user_count = 0
+    paid_user_count = 0
 
-    for row in rows:
-        is_active = bool(row["is_active"])
+    try:
+        for row in rows:
+            email = row["email"]
 
-        if is_active:
-            active_user_count += 1
+            subscription_status = get_personal_subscription_status(
+                email
+            )
 
-        users.append({
-            "email": row["email"],
-            "is_active": is_active,
-            "created_at": timestamp_to_jst(row["created_at"]),
-            "last_login_at": timestamp_to_jst(row["last_login_at"]),
-            "last_seen_at": timestamp_to_jst(row["last_seen_at"]),
-            "today_login_count": row["today_login_count"],
-            "this_month_login_days": row["this_month_login_days"],
-            "today_server_connection_count": row[
-                "today_server_connection_count"
-            ]
-        })
+            is_active = subscription_status["is_active"]
+            is_paid = subscription_status["is_paid"]
+
+            if is_active:
+                active_user_count += 1
+
+            if is_paid:
+                paid_user_count += 1
+
+            users.append({
+                "email": email,
+                "is_active": is_active,
+                "is_paid": is_paid,
+                "created_at": timestamp_to_jst(row["created_at"]),
+                "last_login_at": timestamp_to_jst(row["last_login_at"]),
+                "last_seen_at": timestamp_to_jst(row["last_seen_at"]),
+                "today_login_count": row["today_login_count"],
+                "this_month_login_days": row["this_month_login_days"],
+                "today_server_connection_count": row[
+                    "today_server_connection_count"
+                ]
+            })
+
+    except stripe.error.StripeError as error:
+        print("Personal subscription stats error:", error)
+
+        return {
+            "success": False,
+            "reason": "stripe_error"
+        }
 
     return {
         "success": True,
         "total_user_count": len(users),
         "total_active_user_count": active_user_count,
+        "total_paid_user_count": paid_user_count,
         "users": users
     }
 
@@ -4820,6 +4842,63 @@ def is_subscription_active(email):
                 return True
 
     return False
+
+def get_personal_subscription_status(email):
+    email = email.strip().lower()
+
+    is_active = False
+    is_paid = False
+
+    customers = stripe.Customer.list(
+        email=email,
+        limit=100
+    )
+
+    for customer in customers.auto_paging_iter():
+        if (customer.email or "").strip().lower() != email:
+            continue
+
+        subscriptions = stripe.Subscription.list(
+            customer=customer.id,
+            status="all",
+            limit=100
+        )
+
+        for subscription in subscriptions.auto_paging_iter():
+            if subscription.status not in ("active", "trialing"):
+                continue
+
+            is_active = True
+
+            if subscription.status != "active":
+                continue
+
+            invoices = stripe.Invoice.list(
+                subscription=subscription.id,
+                limit=1
+            )
+
+            if not invoices.data:
+                continue
+
+            latest_invoice = invoices.data[0]
+
+            if (
+                latest_invoice.status == "paid"
+                and int(latest_invoice.amount_paid or 0) > 0
+            ):
+                is_paid = True
+
+            if is_active and is_paid:
+                return {
+                    "is_active": True,
+                    "is_paid": True
+                }
+
+    return {
+        "is_active": is_active,
+        "is_paid": is_paid
+    }
 
 def find_office_subscription(
     email
