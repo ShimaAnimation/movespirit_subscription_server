@@ -3,6 +3,7 @@ import hashlib
 import secrets
 import time
 import uuid
+import logging
 
 import stripe
 import resend
@@ -14,6 +15,10 @@ from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import stripe
+from pydantic import BaseModel
 
 from database import (
     initialize_database,
@@ -99,6 +104,10 @@ CUSTOMER_PORTAL_RETURN_URL = os.getenv(
     "CUSTOMER_PORTAL_RETURN_URL",
     "https://x.com/ShimaAnimation"
 )
+
+logger = logging.getLogger(__name__)
+
+PERSONAL_STRIPE_WORKERS = 4
 
 password_hash = PasswordHash.recommended()
 
@@ -4158,20 +4167,8 @@ class PersonalAdminAllUsersRequest(BaseModel):
 
 @app.post("/admin/personal/all-users")
 def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
-
-    # =========================================
-    # 開発者専用認証
-    # =========================================
-
     if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
-        return {
-            "success": False,
-            "reason": "unauthorized"
-        }
-
-    # =========================================
-    # 日本時間
-    # =========================================
+        return {"success": False, "reason": "unauthorized"}
 
     japan_timezone = timezone(timedelta(hours=9))
     today_jst = datetime.now(japan_timezone).date()
@@ -4179,15 +4176,7 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
     def timestamp_to_jst(timestamp):
         if timestamp is None:
             return None
-
-        return datetime.fromtimestamp(
-            timestamp,
-            tz=japan_timezone
-        ).strftime("%Y-%m-%d %H:%M:%S")
-
-    # =========================================
-    # 個人ユーザー取得
-    # =========================================
+        return datetime.fromtimestamp(timestamp, tz=japan_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -4199,99 +4188,68 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
                     u.created_at,
                     u.last_login_at,
                     u.last_seen_at,
-
-                    COALESCE(
-                        a.login_count,
-                        0
-                    ) AS today_login_count,
-
-                    COALESCE(
-                        a.server_connection_count,
-                        0
-                    ) AS today_server_connection_count,
-
-                    COALESCE(
-                        (
-                            SELECT COUNT(*)
-                            FROM user_daily_activity AS monthly_activity
-                            WHERE LOWER(monthly_activity.email) = LOWER(u.email)
-                            AND monthly_activity.login_count > 0
-                            AND DATE_TRUNC(
-                                'month',
-                                monthly_activity.activity_date
-                            ) = DATE_TRUNC(
-                                'month',
-                                %s::date
-                            )
-                        ),
-                        0
-                    ) AS this_month_login_days
-
+                    COALESCE(a.login_count, 0) AS today_login_count,
+                    COALESCE(a.server_connection_count, 0) AS today_server_connection_count,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM user_daily_activity AS monthly_activity
+                        WHERE LOWER(monthly_activity.email) = LOWER(u.email)
+                          AND monthly_activity.login_count > 0
+                          AND DATE_TRUNC('month', monthly_activity.activity_date) =
+                              DATE_TRUNC('month', %s::date)
+                    ), 0) AS this_month_login_days
                 FROM users AS u
-
                 LEFT JOIN user_daily_activity AS a
-                    ON LOWER(a.email) = LOWER(u.email)
-                    AND a.activity_date = %s
-
-                ORDER BY
-                    u.created_at ASC NULLS LAST,
-                    u.email ASC
+                  ON LOWER(a.email) = LOWER(u.email)
+                 AND a.activity_date = %s
+                ORDER BY u.created_at ASC NULLS LAST, u.email ASC
                 """,
-                (
-                    today_jst,
-                    today_jst
-                )
+                (today_jst, today_jst)
             )
-
             rows = cursor.fetchall()
 
-    # =========================================
-    # レスポンス作成
-    # =========================================
+    start = time.monotonic()
+    subscription_by_email = {}
+    emails = sorted({row["email"].strip().lower() for row in rows if row["email"]})
+
+    try:
+        with ThreadPoolExecutor(max_workers=PERSONAL_STRIPE_WORKERS) as executor:
+            futures = {
+                executor.submit(get_personal_subscription_status, email): email
+                for email in emails
+            }
+            for future in as_completed(futures):
+                email = futures[future]
+                subscription_by_email[email] = future.result()
+    except Exception:
+        # 集計途中の数値を成功扱いにしない。ログにメール・鍵は記録しない。
+        logger.exception("personal_admin_all_users Stripe lookup failed")
+        return {"success": False, "reason": "stripe_lookup_failed"}
 
     users = []
     active_user_count = 0
     paid_user_count = 0
+    for row in rows:
+        email = row["email"]
+        status = subscription_by_email.get((email or "").strip().lower(),
+                                           {"is_active": False, "is_paid": False})
+        is_active = bool(status["is_active"])
+        is_paid = bool(status["is_paid"])
+        active_user_count += int(is_active)
+        paid_user_count += int(is_paid)
+        users.append({
+            "email": email,
+            "is_active": is_active,
+            "is_paid": is_paid,
+            "created_at": timestamp_to_jst(row["created_at"]),
+            "last_login_at": timestamp_to_jst(row["last_login_at"]),
+            "last_seen_at": timestamp_to_jst(row["last_seen_at"]),
+            "today_login_count": row["today_login_count"],
+            "this_month_login_days": row["this_month_login_days"],
+            "today_server_connection_count": row["today_server_connection_count"]
+        })
 
-    try:
-        for row in rows:
-            email = row["email"]
-
-            subscription_status = get_personal_subscription_status(
-                email
-            )
-
-            is_active = subscription_status["is_active"]
-            is_paid = subscription_status["is_paid"]
-
-            if is_active:
-                active_user_count += 1
-
-            if is_paid:
-                paid_user_count += 1
-
-            users.append({
-                "email": email,
-                "is_active": is_active,
-                "is_paid": is_paid,
-                "created_at": timestamp_to_jst(row["created_at"]),
-                "last_login_at": timestamp_to_jst(row["last_login_at"]),
-                "last_seen_at": timestamp_to_jst(row["last_seen_at"]),
-                "today_login_count": row["today_login_count"],
-                "this_month_login_days": row["this_month_login_days"],
-                "today_server_connection_count": row[
-                    "today_server_connection_count"
-                ]
-            })
-
-    except stripe.error.StripeError as error:
-        print("Personal subscription stats error:", error)
-
-        return {
-            "success": False,
-            "reason": "stripe_error"
-        }
-
+    logger.info("personal_admin_all_users: users=%s elapsed=%.2fs", len(users), time.monotonic()-start)
     return {
         "success": True,
         "total_user_count": len(users),
@@ -4299,6 +4257,7 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
         "total_paid_user_count": paid_user_count,
         "users": users
     }
+
 
 class LoginRequest(BaseModel):
     email: str
@@ -4844,61 +4803,47 @@ def is_subscription_active(email):
     return False
 
 def get_personal_subscription_status(email):
-    email = email.strip().lower()
+    """現在の利用権限と、有料請求が確認できる有効契約の有無を返す。
 
-    is_active = False
-    is_paid = False
+    注意: paid は「現存するactive契約に支払い済みの正額請求書がある」こと。
+    現請求期間の入金、売上やMRRを厳密に表すものではない。
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return {"is_active": False, "is_paid": False}
 
-    customers = stripe.Customer.list(
-        email=email,
-        limit=100
-    )
+    active = False
+    paid = False
 
+    customers = stripe.Customer.list(email=email, limit=100)
     for customer in customers.auto_paging_iter():
         if (customer.email or "").strip().lower() != email:
             continue
 
         subscriptions = stripe.Subscription.list(
-            customer=customer.id,
-            status="all",
-            limit=100
+            customer=customer.id, status="all", limit=100
         )
-
         for subscription in subscriptions.auto_paging_iter():
-            if subscription.status not in ("active", "trialing"):
+            status = subscription.status
+            if status not in ("active", "trialing"):
+                continue
+            active = True
+            if status != "active":
                 continue
 
-            is_active = True
+            # 直近1件が無料(0円)でも、それ以前の有料請求を確認する。
+            invoices = stripe.Invoice.list(subscription=subscription.id, limit=100)
+            for invoice in invoices.auto_paging_iter():
+                if invoice.status == "paid" and int(invoice.amount_paid or 0) > 0:
+                    paid = True
+                    break
+            if paid:
+                break
+        if paid:
+            break
 
-            if subscription.status != "active":
-                continue
+    return {"is_active": active, "is_paid": paid}
 
-            invoices = stripe.Invoice.list(
-                subscription=subscription.id,
-                limit=1
-            )
-
-            if not invoices.data:
-                continue
-
-            latest_invoice = invoices.data[0]
-
-            if (
-                latest_invoice.status == "paid"
-                and int(latest_invoice.amount_paid or 0) > 0
-            ):
-                is_paid = True
-
-            if is_active and is_paid:
-                return {
-                    "is_active": True,
-                    "is_paid": True
-                }
-
-    return {
-        "is_active": is_active,
-        "is_paid": is_paid
-    }
 
 def find_office_subscription(
     email
