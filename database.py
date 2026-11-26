@@ -270,6 +270,18 @@ def initialize_database():
                 """
             )
             # =========================================
+            # 個人ユーザー Stripeサブスク解約操作日時
+            # Unix timestamp (seconds), NULL = 未記録
+            # =========================================
+            cursor.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS canceled_at
+                DOUBLE PRECISION
+                """
+            )
+
+            # =========================================
             # 個人ユーザー 最新ログイン日時
             # =========================================
             cursor.execute(
@@ -313,6 +325,48 @@ def initialize_database():
                 """
             )
         connection.commit()
+
+
+def set_personal_canceled_at(email, canceled_at):
+    """Stripeで解約操作が記録された日時を保存する。
+
+    canceled_at: Unix timestamp（秒）。None は未解約に戻す場合。
+    必ず Stripe の確認済みWebhookや管理処理から呼び出す。
+    """
+    email = email.lower().strip()
+    if not email:
+        raise ValueError("email is required")
+
+    if canceled_at is not None:
+        canceled_at = float(canceled_at)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE users
+                SET canceled_at = %s
+                WHERE email = %s
+                """,
+                (canceled_at, email)
+            )
+        connection.commit()
+
+
+def get_personal_canceled_at(email):
+    """個人ユーザーの解約操作日時 (Unix timestamp 秒 or None)。"""
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT canceled_at
+                FROM users
+                WHERE email = %s
+                """,
+                (email.lower().strip(),)
+            )
+            row = cursor.fetchone()
+            return row["canceled_at"] if row else None
 
 
 def get_user_by_email(email):

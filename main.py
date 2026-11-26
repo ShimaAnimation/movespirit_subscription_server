@@ -4162,13 +4162,19 @@ def office_activity_stats(request: OfficeActivityStatsRequest):
             daily
     }
 
+
 class PersonalAdminAllUsersRequest(BaseModel):
     admin_secret: str
 
+
 @app.post("/admin/personal/all-users")
 def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
+
     if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
-        return {"success": False, "reason": "unauthorized"}
+        return {
+            "success": False,
+            "reason": "unauthorized"
+        }
 
     japan_timezone = timezone(timedelta(hours=9))
     today_jst = datetime.now(japan_timezone).date()
@@ -4176,7 +4182,15 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
     def timestamp_to_jst(timestamp):
         if timestamp is None:
             return None
-        return datetime.fromtimestamp(timestamp, tz=japan_timezone).strftime("%Y-%m-%d %H:%M:%S")
+
+        return datetime.fromtimestamp(
+            float(timestamp),
+            tz=japan_timezone
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # =========================================
+    # 個人ユーザー一覧取得
+    # =========================================
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -4184,72 +4198,182 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
                 """
                 SELECT
                     u.email,
+                    u.canceled_at,
                     u.is_active,
                     u.created_at,
                     u.last_login_at,
                     u.last_seen_at,
-                    COALESCE(a.login_count, 0) AS today_login_count,
-                    COALESCE(a.server_connection_count, 0) AS today_server_connection_count,
+
+                    COALESCE(
+                        a.login_count,
+                        0
+                    ) AS today_login_count,
+
+                    COALESCE(
+                        a.server_connection_count,
+                        0
+                    ) AS today_server_connection_count,
+
                     COALESCE((
                         SELECT COUNT(*)
                         FROM user_daily_activity AS monthly_activity
                         WHERE LOWER(monthly_activity.email) = LOWER(u.email)
                           AND monthly_activity.login_count > 0
-                          AND DATE_TRUNC('month', monthly_activity.activity_date) =
-                              DATE_TRUNC('month', %s::date)
+                          AND DATE_TRUNC(
+                              'month',
+                              monthly_activity.activity_date
+                          ) = DATE_TRUNC(
+                              'month',
+                              %s::date
+                          )
                     ), 0) AS this_month_login_days
+
                 FROM users AS u
+
                 LEFT JOIN user_daily_activity AS a
                   ON LOWER(a.email) = LOWER(u.email)
                  AND a.activity_date = %s
-                ORDER BY u.created_at ASC NULLS LAST, u.email ASC
+
+                ORDER BY
+                    u.created_at ASC NULLS LAST,
+                    u.email ASC
                 """,
-                (today_jst, today_jst)
+                (
+                    today_jst,
+                    today_jst
+                )
             )
+
             rows = cursor.fetchall()
 
+    # =========================================
+    # Stripe契約状態取得
+    # =========================================
+
     start = time.monotonic()
+
     subscription_by_email = {}
-    emails = sorted({row["email"].strip().lower() for row in rows if row["email"]})
+
+    emails = sorted({
+        row["email"].strip().lower()
+        for row in rows
+        if row["email"]
+    })
 
     try:
-        with ThreadPoolExecutor(max_workers=PERSONAL_STRIPE_WORKERS) as executor:
+        with ThreadPoolExecutor(
+            max_workers=PERSONAL_STRIPE_WORKERS
+        ) as executor:
+
             futures = {
-                executor.submit(get_personal_subscription_status, email): email
+                executor.submit(
+                    get_personal_subscription_status,
+                    email
+                ): email
                 for email in emails
             }
+
             for future in as_completed(futures):
+
                 email = futures[future]
-                subscription_by_email[email] = future.result()
+
+                subscription_by_email[email] = (
+                    future.result()
+                )
+
     except Exception:
-        # 集計途中の数値を成功扱いにしない。ログにメール・鍵は記録しない。
-        logger.exception("personal_admin_all_users Stripe lookup failed")
-        return {"success": False, "reason": "stripe_lookup_failed"}
+
+        logger.exception(
+            "personal_admin_all_users Stripe lookup failed"
+        )
+
+        return {
+            "success": False,
+            "reason": "stripe_lookup_failed"
+        }
+
+    # =========================================
+    # ユーザー情報作成
+    # =========================================
 
     users = []
+
     active_user_count = 0
     paid_user_count = 0
+
     for row in rows:
+
         email = row["email"]
-        status = subscription_by_email.get((email or "").strip().lower(),
-                                           {"is_active": False, "is_paid": False})
-        is_active = bool(status["is_active"])
-        is_paid = bool(status["is_paid"])
-        active_user_count += int(is_active)
-        paid_user_count += int(is_paid)
+
+        status = subscription_by_email.get(
+            (email or "").strip().lower(),
+            {
+                "is_active": False,
+                "is_paid": False
+            }
+        )
+
+        is_active = bool(
+            status["is_active"]
+        )
+
+        is_paid = bool(
+            status["is_paid"]
+        )
+
+        active_user_count += int(
+            is_active
+        )
+
+        paid_user_count += int(
+            is_paid
+        )
+
         users.append({
+
             "email": email,
+
+            # 解約手続きをした日時（日本時間）
+            "canceled_at": timestamp_to_jst(
+                row["canceled_at"]
+            ),
+
             "is_active": is_active,
+
             "is_paid": is_paid,
-            "created_at": timestamp_to_jst(row["created_at"]),
-            "last_login_at": timestamp_to_jst(row["last_login_at"]),
-            "last_seen_at": timestamp_to_jst(row["last_seen_at"]),
-            "today_login_count": row["today_login_count"],
-            "this_month_login_days": row["this_month_login_days"],
-            "today_server_connection_count": row["today_server_connection_count"]
+
+            "created_at": timestamp_to_jst(
+                row["created_at"]
+            ),
+
+            "last_login_at": timestamp_to_jst(
+                row["last_login_at"]
+            ),
+
+            "last_seen_at": timestamp_to_jst(
+                row["last_seen_at"]
+            ),
+
+            "today_login_count": row[
+                "today_login_count"
+            ],
+
+            "this_month_login_days": row[
+                "this_month_login_days"
+            ],
+
+            "today_server_connection_count": row[
+                "today_server_connection_count"
+            ]
+
         })
 
-    logger.info("personal_admin_all_users: users=%s elapsed=%.2fs", len(users), time.monotonic()-start)
+    logger.info(
+        "personal_admin_all_users: users=%s elapsed=%.2fs",
+        len(users),
+        time.monotonic() - start
+    )
+
     return {
         "success": True,
         "total_user_count": len(users),
@@ -4257,7 +4381,6 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
         "total_paid_user_count": paid_user_count,
         "users": users
     }
-
 
 class LoginRequest(BaseModel):
     email: str
@@ -4802,47 +4925,119 @@ def is_subscription_active(email):
 
     return False
 
-def get_personal_subscription_status(email):
-    """現在の利用権限と、有料請求が確認できる有効契約の有無を返す。
 
-    注意: paid は「現存するactive契約に支払い済みの正額請求書がある」こと。
-    現請求期間の入金、売上やMRRを厳密に表すものではない。
+def get_personal_subscription_status(email):
+    """Stripeの利用権限・有料契約・解約日時を取得する。
+
+    canceled_at:
+        最新のサブスクリプションが解約済み、
+        または解約予約中の場合の解約日時。
+        Unix timestampで返す。
+
+    解約予約中でも、active/trialingなら利用権限は維持する。
     """
+
     email = (email or "").strip().lower()
+
     if not email:
-        return {"is_active": False, "is_paid": False}
+        return {
+            "is_active": False,
+            "is_paid": False,
+            "canceled_at": None
+        }
 
     active = False
     paid = False
 
-    customers = stripe.Customer.list(email=email, limit=100)
+    latest_subscription_key = None
+    latest_canceled_at = None
+
+    customers = stripe.Customer.list(
+        email=email,
+        limit=100
+    )
+
     for customer in customers.auto_paging_iter():
+
         if (customer.email or "").strip().lower() != email:
             continue
 
         subscriptions = stripe.Subscription.list(
-            customer=customer.id, status="all", limit=100
+            customer=customer.id,
+            status="all",
+            limit=100
         )
+
         for subscription in subscriptions.auto_paging_iter():
+
             status = subscription.status
+
+            # =========================================
+            # 最新契約の解約状態
+            # =========================================
+
+            subscription_key = (
+                int(subscription.created or 0),
+                subscription.id
+            )
+
+            if (
+                latest_subscription_key is None
+                or subscription_key > latest_subscription_key
+            ):
+                latest_subscription_key = subscription_key
+
+                is_canceling = (
+                    status == "canceled"
+                    or bool(subscription.cancel_at_period_end)
+                    or subscription.cancel_at is not None
+                )
+
+                if is_canceling and subscription.canceled_at is not None:
+                    latest_canceled_at = int(
+                        subscription.canceled_at
+                    )
+                else:
+                    latest_canceled_at = None
+
+            # =========================================
+            # 利用権限の判定（既存処理）
+            # =========================================
+
             if status not in ("active", "trialing"):
                 continue
+
             active = True
+
             if status != "active":
                 continue
 
-            # 直近1件が無料(0円)でも、それ以前の有料請求を確認する。
-            invoices = stripe.Invoice.list(subscription=subscription.id, limit=100)
+            if paid:
+                continue
+
+            # =========================================
+            # 有料契約の判定（既存処理）
+            # =========================================
+
+            invoices = stripe.Invoice.list(
+                subscription=subscription.id,
+                limit=100
+            )
+
             for invoice in invoices.auto_paging_iter():
-                if invoice.status == "paid" and int(invoice.amount_paid or 0) > 0:
+
+                if (
+                    invoice.status == "paid"
+                    and int(invoice.amount_paid or 0) > 0
+                ):
                     paid = True
                     break
-            if paid:
-                break
-        if paid:
-            break
 
-    return {"is_active": active, "is_paid": paid}
+    return {
+        "is_active": active,
+        "is_paid": paid,
+        "canceled_at": latest_canceled_at
+    }
 
 
 def find_office_subscription(
