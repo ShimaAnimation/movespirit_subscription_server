@@ -4335,7 +4335,7 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
 
             # 解約手続きをした日時（日本時間）
             "canceled_at": timestamp_to_jst(
-                row["canceled_at"]
+                status.get("canceled_at")
             ),
 
             "is_active": is_active,
