@@ -4282,11 +4282,18 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
             }
 
             for future in as_completed(futures):
+
                 email = futures[future]
 
-                subscription_by_email[email] = (
-                    future.result()
-                )
+                try:
+                    subscription_by_email[email] = future.result()
+
+                except Exception:
+                    logger.exception(
+                        "Stripe契約取得エラー: email=%s",
+                        email
+                    )
+                    raise
 
     except Exception:
 
