@@ -4980,13 +4980,21 @@ def is_subscription_active(email):
 
 
 
-def get_personal_subscription_status(email):
-    """現在有効なStripe契約に基づく利用状態と解約予約日を返す。
 
-    is_active: active/trialing契約が存在すること
-    is_paid: 現在activeな契約に正額の支払済み請求書が存在すること
-    cancellation_scheduled: 現在有効な契約に解約予約があること
-    cancellation_effective_at: 解約予約の終了予定Unix時刻
+def get_personal_subscription_status(email):
+    """現在有効なStripe契約の状態と解約予定日を取得する。
+
+    is_active:
+        active / trialing の契約が存在するか
+
+    is_paid:
+        現在activeの契約に正額の支払済み請求書が存在するか
+
+    cancellation_scheduled:
+        現在有効な契約に解約予約があるか
+
+    cancellation_effective_at:
+        解約予定日時（Unix timestamp）
     """
 
     email = (email or "").strip().lower()
@@ -5001,6 +5009,10 @@ def get_personal_subscription_status(email):
 
     if not email:
         return empty.copy()
+
+    # =========================================
+    # 現在有効なStripe契約を取得
+    # =========================================
 
     active_subscriptions = []
 
@@ -5028,8 +5040,10 @@ def get_personal_subscription_status(email):
     if not active_subscriptions:
         return empty.copy()
 
-    # 現在有効な契約から最新のものを取得。
-    # 過去に終了した契約の解約日は使用しない。
+    # =========================================
+    # 現在有効な契約の中で最新のものを取得
+    # 過去に終了した契約は対象外
+    # =========================================
 
     display_subscription = max(
         active_subscriptions,
@@ -5039,11 +5053,24 @@ def get_personal_subscription_status(email):
         )
     )
 
-    # 解約予約されているか確認
+    # =========================================
+    # Stripe Subscriptionを辞書に変換
+    # =========================================
+
+    subscription_data = display_subscription.to_dict()
+
+    # =========================================
+    # 解約予約を確認
+    # =========================================
 
     scheduled = (
-        bool(display_subscription.get("cancel_at_period_end"))
-        or display_subscription.get("cancel_at") is not None
+        bool(
+            subscription_data.get(
+                "cancel_at_period_end",
+                False
+            )
+        )
+        or subscription_data.get("cancel_at") is not None
     )
 
     effective_at = None
@@ -5051,18 +5078,21 @@ def get_personal_subscription_status(email):
 
     if scheduled:
 
-        effective_at = (
-            display_subscription.get("cancel_at")
-            or (
-                display_subscription.get("current_period_end")
-                if display_subscription.get("cancel_at_period_end")
-                else None
+        effective_at = subscription_data.get("cancel_at")
+
+        if effective_at is None and subscription_data.get(
+            "cancel_at_period_end",
+            False
+        ):
+            effective_at = subscription_data.get(
+                "current_period_end"
             )
-        )
 
-        canceled_at = display_subscription.get("canceled_at")
+        canceled_at = subscription_data.get("canceled_at")
 
+    # =========================================
     # 有料契約の判定
+    # =========================================
 
     paid = False
 
@@ -5088,6 +5118,10 @@ def get_personal_subscription_status(email):
         if paid:
             break
 
+    # =========================================
+    # 結果
+    # =========================================
+
     return {
         "is_active": True,
         "is_paid": paid,
@@ -5095,7 +5129,6 @@ def get_personal_subscription_status(email):
         "cancellation_effective_at": effective_at,
         "canceled_at": canceled_at,
     }
-
 
 def find_office_subscription(
     email
