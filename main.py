@@ -4163,6 +4163,7 @@ def office_activity_stats(request: OfficeActivityStatsRequest):
     }
 
 
+
 class PersonalAdminAllUsersRequest(BaseModel):
     admin_secret: str
 
@@ -4170,11 +4171,19 @@ class PersonalAdminAllUsersRequest(BaseModel):
 @app.post("/admin/personal/all-users")
 def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
 
+    # =========================================
+    # 開発者専用認証
+    # =========================================
+
     if not OFFICE_ADMIN_SECRET or request.admin_secret != OFFICE_ADMIN_SECRET:
         return {
             "success": False,
             "reason": "unauthorized"
         }
+
+    # =========================================
+    # 日本時間
+    # =========================================
 
     japan_timezone = timezone(timedelta(hours=9))
     today_jst = datetime.now(japan_timezone).date()
@@ -4198,7 +4207,6 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
                 """
                 SELECT
                     u.email,
-                    u.canceled_at,
                     u.is_active,
                     u.created_at,
                     u.last_login_at,
@@ -4274,7 +4282,6 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
             }
 
             for future in as_completed(futures):
-
                 email = futures[future]
 
                 subscription_by_email[email] = (
@@ -4309,38 +4316,70 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
             (email or "").strip().lower(),
             {
                 "is_active": False,
-                "is_paid": False
+                "is_paid": False,
+                "cancellation_scheduled": False,
+                "cancellation_effective_at": None
             }
         )
 
         is_active = bool(
-            status["is_active"]
+            status.get("is_active", False)
         )
 
         is_paid = bool(
-            status["is_paid"]
+            status.get("is_paid", False)
         )
 
-        active_user_count += int(
-            is_active
+        # =========================================
+        # 解約予約判定
+        # =========================================
+
+        cancellation_scheduled = bool(
+            status.get(
+                "cancellation_scheduled",
+                False
+            )
         )
 
-        paid_user_count += int(
-            is_paid
-        )
+        cancellation_effective_at = None
+
+        if is_active and cancellation_scheduled:
+            cancellation_effective_at = timestamp_to_jst(
+                status.get(
+                    "cancellation_effective_at"
+                )
+            )
+
+        # =========================================
+        # 集計
+        # =========================================
+
+        active_user_count += int(is_active)
+        paid_user_count += int(is_paid)
+
+        # =========================================
+        # API返却データ
+        # =========================================
 
         users.append({
 
             "email": email,
 
-            # 解約手続きをした日時（日本時間）
-            "canceled_at": timestamp_to_jst(
-                status.get("canceled_at")
-            ),
-
             "is_active": is_active,
 
             "is_paid": is_paid,
+
+            "cancellation_scheduled": (
+                is_active and cancellation_scheduled
+            ),
+
+            "cancellation_effective_at": (
+                cancellation_effective_at
+            ),
+
+            # 旧クライアントとの互換性のため残す。
+            # ここには解約申込日時を入れない。
+            "canceled_at": None,
 
             "created_at": timestamp_to_jst(
                 row["created_at"]
@@ -4365,14 +4404,21 @@ def personal_admin_all_users(request: PersonalAdminAllUsersRequest):
             "today_server_connection_count": row[
                 "today_server_connection_count"
             ]
-
         })
+
+    # =========================================
+    # ログ
+    # =========================================
 
     logger.info(
         "personal_admin_all_users: users=%s elapsed=%.2fs",
         len(users),
         time.monotonic() - start
     )
+
+    # =========================================
+    # 成功
+    # =========================================
 
     return {
         "success": True,
@@ -4926,31 +4972,30 @@ def is_subscription_active(email):
     return False
 
 
+
 def get_personal_subscription_status(email):
-    """Stripeの利用権限・有料契約・解約日時を取得する。
+    """現在有効なStripe契約に基づく利用状態と解約予約日を返す。
 
-    canceled_at:
-        最新のサブスクリプションが解約済み、
-        または解約予約中の場合の解約日時。
-        Unix timestampで返す。
-
-    解約予約中でも、active/trialingなら利用権限は維持する。
+    is_active: active/trialing契約が存在すること
+    is_paid: 現在activeな契約に正額の支払済み請求書が存在すること
+    cancellation_scheduled: 現在有効な契約に解約予約があること
+    cancellation_effective_at: 解約予約の終了予定Unix時刻
     """
 
     email = (email or "").strip().lower()
 
+    empty = {
+        "is_active": False,
+        "is_paid": False,
+        "cancellation_scheduled": False,
+        "cancellation_effective_at": None,
+        "canceled_at": None,
+    }
+
     if not email:
-        return {
-            "is_active": False,
-            "is_paid": False,
-            "canceled_at": None
-        }
+        return empty.copy()
 
-    active = False
-    paid = False
-
-    latest_subscription_key = None
-    latest_canceled_at = None
+    active_subscriptions = []
 
     customers = stripe.Customer.list(
         email=email,
@@ -4970,73 +5015,78 @@ def get_personal_subscription_status(email):
 
         for subscription in subscriptions.auto_paging_iter():
 
-            status = subscription.status
+            if subscription.status in ("active", "trialing"):
+                active_subscriptions.append(subscription)
 
-            # =========================================
-            # 最新契約の解約状態
-            # =========================================
+    if not active_subscriptions:
+        return empty.copy()
 
-            subscription_key = (
-                int(subscription.created or 0),
-                subscription.id
+    # 現在有効な契約から最新のものを取得。
+    # 過去に終了した契約の解約日は使用しない。
+
+    display_subscription = max(
+        active_subscriptions,
+        key=lambda sub: (
+            int(sub.created or 0),
+            str(sub.id)
+        )
+    )
+
+    # 解約予約されているか確認
+
+    scheduled = (
+        bool(display_subscription.get("cancel_at_period_end"))
+        or display_subscription.get("cancel_at") is not None
+    )
+
+    effective_at = None
+    canceled_at = None
+
+    if scheduled:
+
+        effective_at = (
+            display_subscription.get("cancel_at")
+            or (
+                display_subscription.get("current_period_end")
+                if display_subscription.get("cancel_at_period_end")
+                else None
             )
+        )
+
+        canceled_at = display_subscription.get("canceled_at")
+
+    # 有料契約の判定
+
+    paid = False
+
+    for subscription in active_subscriptions:
+
+        if subscription.status != "active":
+            continue
+
+        invoices = stripe.Invoice.list(
+            subscription=subscription.id,
+            limit=100
+        )
+
+        for invoice in invoices.auto_paging_iter():
 
             if (
-                latest_subscription_key is None
-                or subscription_key > latest_subscription_key
+                invoice.status == "paid"
+                and int(invoice.amount_paid or 0) > 0
             ):
-                latest_subscription_key = subscription_key
+                paid = True
+                break
 
-                is_canceling = (
-                    status == "canceled"
-                    or bool(subscription.cancel_at_period_end)
-                    or subscription.cancel_at is not None
-                )
-
-                if is_canceling and subscription.canceled_at is not None:
-                    latest_canceled_at = int(
-                        subscription.canceled_at
-                    )
-                else:
-                    latest_canceled_at = None
-
-            # =========================================
-            # 利用権限の判定（既存処理）
-            # =========================================
-
-            if status not in ("active", "trialing"):
-                continue
-
-            active = True
-
-            if status != "active":
-                continue
-
-            if paid:
-                continue
-
-            # =========================================
-            # 有料契約の判定（既存処理）
-            # =========================================
-
-            invoices = stripe.Invoice.list(
-                subscription=subscription.id,
-                limit=100
-            )
-
-            for invoice in invoices.auto_paging_iter():
-
-                if (
-                    invoice.status == "paid"
-                    and int(invoice.amount_paid or 0) > 0
-                ):
-                    paid = True
-                    break
+        if paid:
+            break
 
     return {
-        "is_active": active,
+        "is_active": True,
         "is_paid": paid,
-        "canceled_at": latest_canceled_at
+        "cancellation_scheduled": scheduled,
+        "cancellation_effective_at": effective_at,
+        "canceled_at": canceled_at,
     }
 
 
